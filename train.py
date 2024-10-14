@@ -1,3 +1,7 @@
+#MineDojo
+import minedojo
+import gym
+
 import gymnasium
 import argparse
 from tensorboardX import SummaryWriter
@@ -24,13 +28,17 @@ import agents
 from sub_models.functions_losses import symexp
 from sub_models.world_models import WorldModel, MSELoss
 
+# print(gymnasium.envs.registry.keys())
 
 def build_single_env(env_name, image_size, seed):
-    env = gymnasium.make(env_name, full_action_space=False, render_mode="rgb_array", frameskip=1)
-    env = env_wrapper.SeedEnvWrapper(env, seed=seed)
-    env = env_wrapper.MaxLast2FrameSkipWrapper(env, skip=4)
-    env = gymnasium.wrappers.ResizeObservation(env, shape=image_size)
-    env = env_wrapper.LifeLossInfo(env)
+    env = minedojo.make(task_id="harvest_milk", image_size=(224, 224))
+    env.seed(seed)
+    # env = gymnasium.make(env_name, full_action_space=False, render_mode="rgb_array", frameskip=1)
+    # env = env_wrapper.SeedEnvWrapper(env, seed=seed)
+    # env = env_wrapper.MaxLast2FrameSkipWrapper(env, skip=4)
+    # env = gymnasium.wrappers.ResizeObservation(env, shape=image_size)
+    # env = env_wrapper.LifeLossInfo(env)
+
     return env
 
 
@@ -39,8 +47,9 @@ def build_vec_env(env_name, image_size, num_envs, seed):
     def lambda_generator(env_name, image_size):
         return lambda: build_single_env(env_name, image_size, seed)
     env_fns = []
-    env_fns = [lambda_generator(env_name, image_size) for i in range(num_envs)]
-    vec_env = gymnasium.vector.AsyncVectorEnv(env_fns=env_fns)
+    env_fns = [lambda_generator(env_name, image_size) for i in range(1)]
+        
+    vec_env = gym.vector.AsyncVectorEnv(env_fns=env_fns,shared_memory=False)
     return vec_env
 
 
@@ -86,15 +95,17 @@ def joint_train_world_model_agent(env_name, max_steps, num_envs, image_size,
 
     # build vec env, not useful in the Atari100k setting
     # but when the max_steps is large, you can use parallel envs to speed up
-    vec_env = build_vec_env(env_name, image_size, num_envs=num_envs, seed=seed)
+    # vec_env = build_vec_env(env_name, image_size, num_envs=num_envs, seed=seed)
+    vec_env=build_single_env(env_name, image_size, seed)
     print("Current env: " + colorama.Fore.YELLOW + f"{env_name}" + colorama.Style.RESET_ALL)
 
     # reset envs and variables
     sum_reward = np.zeros(num_envs)
-    current_obs, current_info = vec_env.reset()
+    obs = vec_env.reset()
+    current_obs = obs["rgb"]
     context_obs = deque(maxlen=16)
     context_action = deque(maxlen=16)
-
+    action_max_values = np.array([2, 2, 3, 24, 24, 7, 243, 35])
     # sample and train
     for total_steps in tqdm(range(max_steps//num_envs)):
         # sample part >>>
@@ -103,8 +114,11 @@ def joint_train_world_model_agent(env_name, max_steps, num_envs, image_size,
             agent.eval()
             with torch.no_grad():
                 if len(context_action) == 0:
-                    action = vec_env.action_space.sample()
+                    # print("vec_env sample")
+
+                    action = vec_env.action_space.sample() 
                 else:
+                    # print("agent sample")
                     context_latent = world_model.encode_obs(torch.cat(list(context_obs), dim=1))
                     model_context_action = np.stack(list(context_action), axis=1)
                     model_context_action = torch.Tensor(model_context_action).cuda()
@@ -113,28 +127,42 @@ def joint_train_world_model_agent(env_name, max_steps, num_envs, image_size,
                         torch.cat([prior_flattened_sample, last_dist_feat], dim=-1),
                         greedy=False
                     )
+                    action = np.floor(action * (action_max_values + 1)).astype(int)
+                    action = np.clip(action, 0, action_max_values)
 
             context_obs.append(rearrange(torch.Tensor(current_obs).cuda(), "B H W C -> B 1 C H W")/255)
             context_action.append(action)
         else:
-            action = vec_env.action_space.sample()
+            # print("vec_env sample")
+            action = vec_env.action_space.sample() 
+        # print(action)
+        action[5]=3
+        obs, reward, done, info = vec_env.step(action)
 
-        obs, reward, done, truncated, info = vec_env.step(action)
-        replay_buffer.append(current_obs, action, reward, np.logical_or(done, info["life_loss"]))
+        # Preporcess
+        if any(s < 0 for s in current_obs.strides):
+            current_obs = current_obs.copy()
+        current_obs = np.transpose(current_obs, (1, 2, 0))
+        current_obs = np.expand_dims(current_obs, axis=0) 
+        # action = np.expand_dims(action, axis=0)
+        reward = np.array([reward], dtype=float)
+        done = np.array([done], dtype=float) 
 
-        done_flag = np.logical_or(done, truncated)
+        replay_buffer.append(current_obs, action, reward, done) #np.logical_or(done, info["life_loss"])
+
+        done_flag = done #np.logical_or(done, truncated)
         if done_flag.any():
             for i in range(num_envs):
                 if done_flag[i]:
                     logger.log(f"sample/{env_name}_reward", sum_reward[i])
-                    logger.log(f"sample/{env_name}_episode_steps", current_info["episode_frame_number"][i]//4)  # framskip=4
+                    # logger.log(f"sample/{env_name}_episode_steps", current_info["episode_frame_number"][i]//4)  # framskip=4
                     logger.log("replay_buffer/length", len(replay_buffer))
                     sum_reward[i] = 0
 
         # update current_obs, current_info and sum_reward
         sum_reward += reward
-        current_obs = obs
-        current_info = info
+        current_obs = obs["rgb"]
+        # current_info = info
         # <<< sample part
 
         # train world model part >>>
@@ -202,7 +230,7 @@ def build_agent(conf, action_dim):
         feat_dim=32*32+conf.Models.WorldModel.TransformerHiddenDim,
         num_layers=conf.Models.Agent.NumLayers,
         hidden_dim=conf.Models.Agent.HiddenDim,
-        action_dim=action_dim,
+        action_dim=[3, 3, 4, 25, 25, 8, 244, 36],
         gamma=conf.Models.Agent.Gamma,
         lambd=conf.Models.Agent.Lambda,
         entropy_coef=conf.Models.Agent.EntropyCoef,
@@ -225,7 +253,7 @@ if __name__ == "__main__":
     parser.add_argument("-trajectory_path", type=str, required=True)
     args = parser.parse_args()
     conf = load_config(args.config_path)
-    print(colorama.Fore.RED + str(args) + colorama.Style.RESET_ALL)
+    print(colorama.Fore.GREEN + str(args) + colorama.Style.RESET_ALL)
 
     # set seed
     seed_np_torch(seed=args.seed)
@@ -238,7 +266,11 @@ if __name__ == "__main__":
     if conf.Task == "JointTrainAgent":
         # getting action_dim with dummy env
         dummy_env = build_single_env(args.env_name, conf.BasicSettings.ImageSize, seed=0)
-        action_dim = dummy_env.action_space.n
+        # action_dim = dummy_env.action_space.n
+        action_dim=dummy_env.action_space.shape[0]
+        # print(dummy_env.action_space.shape)
+        # print(dummy_eenv.observation_space)
+
 
         # build world model and agent
         world_model = build_world_model(conf, action_dim)
@@ -247,6 +279,7 @@ if __name__ == "__main__":
         # build replay buffer
         replay_buffer = ReplayBuffer(
             obs_shape=(conf.BasicSettings.ImageSize, conf.BasicSettings.ImageSize, 3),
+            action_shape=(action_dim),
             num_envs=conf.JointTrainAgent.NumEnvs,
             max_length=conf.JointTrainAgent.BufferMaxLength,
             warmup_length=conf.JointTrainAgent.BufferWarmUp,
@@ -257,7 +290,8 @@ if __name__ == "__main__":
         if conf.JointTrainAgent.UseDemonstration:
             print(colorama.Fore.MAGENTA + f"loading demonstration trajectory from {args.trajectory_path}" + colorama.Style.RESET_ALL)
             replay_buffer.load_trajectory(path=args.trajectory_path)
-
+        
+        # exit() 
         # train
         joint_train_world_model_agent(
             env_name=args.env_name,

@@ -2,19 +2,19 @@ Task: "JointTrainAgent"
 
 BasicSettings:
   Seed: 0
-  ImageSize: 64
-  ReplayBufferOnGPU: True
+  ImageSize: 224
+  ReplayBufferOnGPU: False
 
 JointTrainAgent:
   SampleMaxSteps: 102000
   BufferMaxLength: 100000
   BufferWarmUp: 1024
   NumEnvs: 1
-  BatchSize: 16
+  BatchSize: 8
   DemonstrationBatchSize: 4
-  BatchLength: 64
-  ImagineBatchSize: 1024
-  ImagineDemonstrationBatchSize: 256
+  BatchLength: 8
+  ImagineBatchSize: 128
+  ImagineDemonstrationBatchSize: 128
   ImagineContextLength: 8
   ImagineBatchLength: 16
   TrainDynamicsEverySteps: 1

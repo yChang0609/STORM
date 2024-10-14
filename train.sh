@@ -1,4 +1,8 @@
-env_name=MsPacman
+export MINEDOJO_HEADLESS=1
+
+# env_name=MsPacman
+env_name=MineDojo
+
 python -u train.py \
     -n "${env_name}-life_done-wm_2L512D8H-100k-seed1" \
     -seed 1 \

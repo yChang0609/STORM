@@ -28,7 +28,7 @@ class EncoderBN(nn.Module):
                 bias=False
             )
         )
-        feature_width = 64//2
+        feature_width = 224//2
         channels = stem_channels
         backbone.append(nn.BatchNorm2d(stem_channels))
         backbone.append(nn.ReLU(inplace=True))
@@ -218,7 +218,7 @@ class WorldModel(nn.Module):
                  transformer_max_length, transformer_hidden_dim, transformer_num_layers, transformer_num_heads):
         super().__init__()
         self.transformer_hidden_dim = transformer_hidden_dim
-        self.final_feature_width = 4
+        self.final_feature_width = 7#4
         self.stoch_dim = 32
         self.stoch_flattened_dim = self.stoch_dim*self.stoch_dim
         self.use_amp = True

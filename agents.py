@@ -58,8 +58,12 @@ class ActorCriticAgent(nn.Module):
             ])
         self.actor = nn.Sequential(
             *actor,
-            nn.Linear(hidden_dim, action_dim)
+            # nn.Linear(hidden_dim, action_dim)
         )
+        self.mlps = nn.ModuleList()
+        for action in action_dim:
+            print(f"action dim : {action}")
+            self.mlps.append(nn.Linear(hidden_dim, action))
 
         critic = [
             nn.Linear(feat_dim, hidden_dim, bias=False),
@@ -91,7 +95,8 @@ class ActorCriticAgent(nn.Module):
             slow_param.data.copy_(slow_param.data * decay + param.data * (1 - decay))
 
     def policy(self, x):
-        logits = self.actor(x)
+        x = self.actor(x)
+        logits = torch.cat([mlp(x) for mlp in self.mlps], dim=1)
         return logits
 
     def value(self, x):
@@ -106,7 +111,8 @@ class ActorCriticAgent(nn.Module):
         return value
 
     def get_logits_raw_value(self, x):
-        logits = self.actor(x)
+        x = self.actor(x)
+        logits = torch.cat([mlp(x) for mlp in self.mlps], dim=1)
         raw_value = self.critic(x)
         return logits, raw_value
 
