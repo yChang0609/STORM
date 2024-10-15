@@ -54,7 +54,9 @@ def eval_episodes(num_episode, env_name, max_steps, num_envs, image_size,
     world_model.eval()
     agent.eval()
     vec_env = build_vec_env(env_name, image_size, num_envs=num_envs)
-    print("Current env: " + colorama.Fore.YELLOW + f"{env_name}" + colorama.Style.RESET_ALL)
+    # print("Current env: " + colorama.Fore.YELLOW + f"{env_name}" + colorama.Style.RESET_ALL)
+    print("Current env: " + f"{env_name}")
+
     sum_reward = np.zeros(num_envs)
     current_obs, current_info = vec_env.reset()
     context_obs = deque(maxlen=16)
@@ -91,7 +93,9 @@ def eval_episodes(num_episode, env_name, max_steps, num_envs, image_size,
                     final_rewards.append(sum_reward[i])
                     sum_reward[i] = 0
                     if len(final_rewards) == num_episode:
-                        print("Mean reward: " + colorama.Fore.YELLOW + f"{np.mean(final_rewards)}" + colorama.Style.RESET_ALL)
+                        # print("Mean reward: " + colorama.Fore.YELLOW + f"{np.mean(final_rewards)}" + colorama.Style.RESET_ALL)
+                        print("Mean reward: " + f"{np.mean(final_rewards)}")
+
                         return np.mean(final_rewards)
 
         # update current_obs, current_info and sum_reward
@@ -115,7 +119,7 @@ if __name__ == "__main__":
     parser.add_argument("-run_name", type=str, required=True)
     args = parser.parse_args()
     conf = load_config(args.config_path)
-    print(colorama.Fore.RED + str(args) + colorama.Style.RESET_ALL)
+    print(str(args))
     # print(colorama.Fore.RED + str(conf) + colorama.Style.RESET_ALL)
 
     # set seed

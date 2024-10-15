@@ -13,14 +13,14 @@ JointTrainAgent:
   BatchSize: 16
   DemonstrationBatchSize: 4
   BatchLength: 64
-  ImagineBatchSize: 1024
+  ImagineBatchSize: 384
   ImagineDemonstrationBatchSize: 256
   ImagineContextLength: 8
   ImagineBatchLength: 16
   TrainDynamicsEverySteps: 1
   TrainAgentEverySteps: 1
   UseDemonstration: False
-  SaveEverySteps: 2500
+  SaveEverySteps: 2000
 
 Models:
   WorldModel:

@@ -22,7 +22,9 @@ from replay_buffer import ReplayBuffer
 import env_wrapper
 import agents
 from sub_models.functions_losses import symexp
-from sub_models.world_models import WorldModel, MSELoss
+# from sub_models.world_models import WorldModel, MSELoss
+from sub_models.jepa_world_models import JEPABaseWorldModel as WorldModel
+
 
 
 def build_single_env(env_name, image_size, seed):
@@ -87,7 +89,8 @@ def joint_train_world_model_agent(env_name, max_steps, num_envs, image_size,
     # build vec env, not useful in the Atari100k setting
     # but when the max_steps is large, you can use parallel envs to speed up
     vec_env = build_vec_env(env_name, image_size, num_envs=num_envs, seed=seed)
-    print("Current env: " + colorama.Fore.YELLOW + f"{env_name}" + colorama.Style.RESET_ALL)
+    # print("Current env: " + colorama.Fore.YELLOW + f"{env_name}" + colorama.Style.RESET_ALL)
+    print("Current env: " + f"{env_name}")
 
     # reset envs and variables
     sum_reward = np.zeros(num_envs)
@@ -114,7 +117,7 @@ def joint_train_world_model_agent(env_name, max_steps, num_envs, image_size,
                         greedy=False
                     )
 
-            context_obs.append(rearrange(torch.Tensor(current_obs).cuda(), "B H W C -> B 1 C H W")/255)
+            context_obs.append(rearrange(torch.Tensor(current_obs).cuda(), "B H W C -> B 1 C H W"))
             context_action.append(action)
         else:
             action = vec_env.action_space.sample()
@@ -181,7 +184,8 @@ def joint_train_world_model_agent(env_name, max_steps, num_envs, image_size,
 
         # save model per episode
         if total_steps % (save_every_steps//num_envs) == 0:
-            print(colorama.Fore.GREEN + f"Saving model at total steps {total_steps}" + colorama.Style.RESET_ALL)
+            # print(colorama.Fore.GREEN + f"Saving model at total steps {total_steps}" + colorama.Style.RESET_ALL)
+            print(f"Saving model at total steps {total_steps}")
             torch.save(world_model.state_dict(), f"ckpt/{args.n}/world_model_{total_steps}.pth")
             torch.save(agent.state_dict(), f"ckpt/{args.n}/agent_{total_steps}.pth")
 
@@ -189,7 +193,14 @@ def joint_train_world_model_agent(env_name, max_steps, num_envs, image_size,
 def build_world_model(conf, action_dim):
     return WorldModel(
         in_channels=conf.Models.WorldModel.InChannels,
+        in_width=conf.BasicSettings.ImageSize,
         action_dim=action_dim,
+        patch_size=4,
+        jepa_size='vit_tiny',
+        jepa_load_path=(
+            "/home/cgv/Documents/project/EmbodiedAgent/i-jepa/logs/vae/in-tiny_vit-t4_Best_ep100_S200_notShuffle/jepa-latest.pth.tar",
+            "/home/cgv/Documents/project/EmbodiedAgent/i-jepa/logs/vae/in-tiny_vit-t4_Best_ep100_S200_notShuffle/vae-categorical-latest.pth.tar"
+        ),
         transformer_max_length=conf.Models.WorldModel.TransformerMaxLength,
         transformer_hidden_dim=conf.Models.WorldModel.TransformerHiddenDim,
         transformer_num_layers=conf.Models.WorldModel.TransformerNumLayers,
@@ -225,7 +236,8 @@ if __name__ == "__main__":
     parser.add_argument("-trajectory_path", type=str, required=True)
     args = parser.parse_args()
     conf = load_config(args.config_path)
-    print(colorama.Fore.RED + str(args) + colorama.Style.RESET_ALL)
+    # print(colorama.Fore.RED + str(args) + colorama.Style.RESET_ALL)
+    print(str(args))
 
     # set seed
     seed_np_torch(seed=args.seed)
@@ -255,7 +267,8 @@ if __name__ == "__main__":
 
         # judge whether to load demonstration trajectory
         if conf.JointTrainAgent.UseDemonstration:
-            print(colorama.Fore.MAGENTA + f"loading demonstration trajectory from {args.trajectory_path}" + colorama.Style.RESET_ALL)
+            # print(colorama.Fore.MAGENTA + f"loading demonstration trajectory from {args.trajectory_path}" + colorama.Style.RESET_ALL)
+            print(f"loading demonstration trajectory from {args.trajectory_path}")
             replay_buffer.load_trajectory(path=args.trajectory_path)
 
         # train
