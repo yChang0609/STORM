@@ -23,6 +23,10 @@ from sub_models.utils.schedulers import (
     )
 from math import sqrt
 
+def tensor_unormalize(tensor):
+    mean = [0.485, 0.456, 0.406]
+    std = [0.229, 0.224, 0.225]
+    return tensor * torch.tensor(std).view(3, 1, 1).cuda() + torch.tensor(mean).view(3, 1, 1).cuda()
 # -- JEPA model
 def init_jepa_model(
         patch_size=16,
@@ -148,7 +152,7 @@ class MSELoss(nn.Module):
 
     def forward(self, obs_hat, obs):
         loss = (obs_hat - obs)**2
-        loss = reduce(loss, "B L P C  -> B L C", "sum")
+        loss = reduce(loss, "B L P C  -> B L", "sum")
         return loss.mean()
 
 class CategoricalKLDivLossWithFreeBits(nn.Module):
@@ -173,7 +177,6 @@ class JEPABaseWorldModel(nn.Module):
                  transformer_max_length, transformer_hidden_dim, transformer_num_layers, transformer_num_heads,
                  use_amp=True):
         super().__init__()
-        self.normalize_function = transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
         jepa_encoder = init_jepa_model(
             patch_size=patch_size,
             model_name=jepa_size,
@@ -184,7 +187,13 @@ class JEPABaseWorldModel(nn.Module):
             encoder=jepa_encoder,
             frozen=True
         )
-        self.jepa_encoder = jepa_encoder
+        self.jepa_encoder = nn.Sequential(
+            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+            jepa_encoder,
+            # Rearrange('B P C -> B C P'),
+            # nn.BatchNorm1d(jepa_encoder.embed_dim),
+            # Rearrange('B C P -> B P C'),
+            )
 
         jepa_decoder = init_jepa_decoder(
             emb_channel=jepa_encoder.embed_dim,
@@ -200,8 +209,8 @@ class JEPABaseWorldModel(nn.Module):
         self.stoch_flattened_dim = self.stoch_dim*self.stoch_dim
         self.use_amp = use_amp
         vae = cate_vae.CategoricalVAE(stoch_dim=self.stoch_dim, 
-                    in_channels=self.jepa_encoder.embed_dim, 
-                    in_feature_width=sqrt(self.jepa_encoder.patch_embed.num_patches),
+                    in_channels=jepa_encoder.embed_dim, 
+                    in_feature_width=sqrt(jepa_encoder.patch_embed.num_patches),
                     use_amp=use_amp)
         self.vae = vae
 
@@ -235,24 +244,24 @@ class JEPABaseWorldModel(nn.Module):
 
 
         # Print Model 
-        print("JEPA model:")
-        print(self.jepa_encoder)
-        print(self.jepa_decoder)
+        # print("JEPA model:")
+        # print(self.jepa_encoder)
+        # print(self.jepa_decoder)
 
-        print("VAE:")        
-        print(self.vae)
+        # print("VAE:")        
+        # print(self.vae)
 
-        print("STORM Transformer:")
-        print(self.storm_transformer)
+        # print("STORM Transformer:")
+        # print(self.storm_transformer)
 
-        print("Distribution Head:")
-        print(self.dist_head)
+        # print("Distribution Head:")
+        # print(self.dist_head)
 
-        print("Reward Decoder:")
-        print(self.reward_decoder)
+        # print("Reward Decoder:")
+        # print(self.reward_decoder)
 
-        print("Termination Decoder:")
-        print(self.termination_decoder)
+        # print("Termination Decoder:")
+        # print(self.termination_decoder)
 
         
         self.mse_loss_func = MSELoss()
@@ -268,13 +277,13 @@ class JEPABaseWorldModel(nn.Module):
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=self.use_amp):
             batch_size=obs.shape[0]
             obs = rearrange(obs, "B L C H W  -> (B L) C H W")
-            normal_obs = self.normalize_function(obs)
-            embedding = self.jepa_encoder(normal_obs)
+            embedding = self.jepa_encoder(obs)
             post_logits = self.vae.encode(embedding)
             sample = self.vae.sample(post_logits)
             # flattened_sample = self.flatten_sample(sample)
+            embedding = rearrange(embedding, "(B L) P C  -> B L P C",B=batch_size)
             flattened_sample = rearrange(sample, "(B L) K C  -> B L (K C)",B=batch_size, K=self.stoch_dim, C=self.stoch_dim)
-        return flattened_sample
+        return flattened_sample, embedding
 
     def calc_last_dist_feat(self, latent, action):
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=self.use_amp):
@@ -344,7 +353,7 @@ class JEPABaseWorldModel(nn.Module):
 
         self.storm_transformer.reset_kv_cache_list(imagine_batch_size, dtype=self.tensor_dtype)
         # context
-        context_latent = self.encode_obs(sample_obs)
+        context_latent, embedding = self.encode_obs(sample_obs)
         for i in range(sample_obs.shape[1]):  # context_length is sample_obs.shape[1]
             last_obs_hat, last_reward_hat, last_termination_hat, last_latent, last_dist_feat = self.predict_next(
                 context_latent[:, i:i+1],
@@ -370,8 +379,9 @@ class JEPABaseWorldModel(nn.Module):
                 obs_hat_list.append(last_obs_hat[::imagine_batch_size//16])  # uniform sample vec_env
 
         if log_video:
-
-            logger.log("Imagine/predict_video", torch.clamp(torch.cat(obs_hat_list, dim=1), 0, 1).cpu().float().detach().numpy())
+            logger.log("Imagine/orig_video", torch.clamp(sample_obs[::imagine_batch_size//16], 0, 1).cpu().float().detach().numpy())
+            logger.log("Imagine/jepa_video", torch.clamp(tensor_unormalize(self.jepa_decoder.decode_video(embedding[::imagine_batch_size//16])), 0, 1).cpu().float().detach().numpy())
+            logger.log("Imagine/predict_video", torch.clamp(tensor_unormalize(torch.cat(obs_hat_list, dim=1)), 0, 1).cpu().float().detach().numpy())
 
         return torch.cat([self.latent_buffer, self.hidden_buffer], dim=-1), self.action_buffer, self.reward_hat_buffer, self.termination_hat_buffer
 
@@ -384,8 +394,7 @@ class JEPABaseWorldModel(nn.Module):
             batch_size=obs.shape[0]
             
             obs = rearrange(obs, "B L C H W  -> (B L) C H W")
-            normal_obs = self.normalize_function(obs)
-            embedding = self.jepa_encoder(normal_obs)
+            embedding = self.jepa_encoder(obs)
             post_logits = self.vae.encode(embedding)
             sample = self.vae.sample(post_logits)
             post_logits = rearrange(post_logits[0], "(B L) K C -> B L K C", B=batch_size, K=self.stoch_dim, C=self.stoch_dim)

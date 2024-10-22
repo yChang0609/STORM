@@ -12,15 +12,15 @@ JointTrainAgent:
   NumEnvs: 1
   BatchSize: 16
   DemonstrationBatchSize: 4
-  BatchLength: 64
-  ImagineBatchSize: 384
+  BatchLength: 16
+  ImagineBatchSize: 16
   ImagineDemonstrationBatchSize: 256
   ImagineContextLength: 8
   ImagineBatchLength: 16
   TrainDynamicsEverySteps: 1
   TrainAgentEverySteps: 1
   UseDemonstration: False
-  SaveEverySteps: 2000
+  SaveEverySteps: 2500
 
 Models:
   WorldModel:

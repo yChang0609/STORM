@@ -46,7 +46,14 @@ class EmbDecoder(nn.Module):
         batch_size = x.shape[0]
         x = rearrange(x, "B (H W) C  -> B C H W",B = batch_size,H=self.in_width)
         obs_hat = self.backbone(x)
-        obs_hat = rearrange(obs_hat, "(B L) C H W  -> B L C H W",B = batch_size,H=self.recon_image_width)
+        obs_hat = rearrange(obs_hat, "B C H W  -> B 1 C H W",B = batch_size,H=self.recon_image_width)
+        return obs_hat
+    
+    def decode_video(self, x):
+        batch_size = x.shape[0]
+        x = rearrange(x, "B L P C  -> (B L) P C")
+        obs_hat = self.forward(x)
+        obs_hat = rearrange(obs_hat, "(B L) 1 C H W -> B L C H W",B = batch_size, H=self.recon_image_width)
         return obs_hat
 
 def init_jepa_decoder(

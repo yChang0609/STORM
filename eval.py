@@ -22,7 +22,9 @@ from replay_buffer import ReplayBuffer
 import env_wrapper
 import agents
 from sub_models.functions_losses import symexp
-from sub_models.world_models import WorldModel, MSELoss
+# from sub_models.world_models import WorldModel, MSELoss
+from sub_models.jepa_world_models import JEPABaseWorldModel as WorldModel
+
 
 
 def process_visualize(img):

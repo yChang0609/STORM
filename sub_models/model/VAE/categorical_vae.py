@@ -53,7 +53,7 @@ class CategoricalVAE(BaseVAE):
             in_feature_width=in_feature_width*r, 
             final_feature_width=final_feature_width,
             stem_channels=stem_channels,
-            num_repeat=2
+            num_repeat=0
         )
 
         self.dist_head = DistHead(
@@ -95,10 +95,11 @@ class CategoricalVAE(BaseVAE):
         return [post_logits]
     
     def decode(self, z: Tensor) -> Tensor:
-        z = self.flatten_sample(z)
-        x = self.decoder(z)
-        x = self.pixel_unshuffle(x)
-        x = rearrange(x, "B C H W  -> B (H W) C", C=self.in_channels, H=self.in_feature_width)
+        with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=self.use_amp):
+            z = self.flatten_sample(z)
+            x = self.decoder(z)
+            x = self.pixel_unshuffle(x)
+            x = rearrange(x, "B C H W  -> B (H W) C", C=self.in_channels, H=self.in_feature_width)
         return x
     
     def sample(self, params:List[Tensor], **kwargs) -> Tensor:
