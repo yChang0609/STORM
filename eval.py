@@ -72,7 +72,7 @@ def eval_episodes(num_episode, env_name, max_steps, num_envs, image_size,
             if len(context_action) == 0:
                 action = vec_env.action_space.sample()
             else:
-                context_latent = world_model.encode_obs(torch.cat(list(context_obs), dim=1))
+                context_latent,_ = world_model.encode_obs(torch.cat(list(context_obs), dim=1))
                 model_context_action = np.stack(list(context_action), axis=1)
                 model_context_action = torch.Tensor(model_context_action).cuda()
                 prior_flattened_sample, last_dist_feat = world_model.calc_last_dist_feat(context_latent, model_context_action)
