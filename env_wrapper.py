@@ -1,9 +1,70 @@
+import gym
 import gymnasium
 import numpy as np
 from collections import deque
 import cv2
 from einops import rearrange
 import copy
+
+# MineDojo Gymnasium Wrapper
+class MineDojoGymnasium(gymnasium.Env):
+    def __init__(self, minedojo_env:gym.Wrapper, seed, skip=4):
+        super().__init__()
+        self.minedojo_env = minedojo_env
+        self.skip = skip
+        self.seed = seed
+        self.observation_space = minedojo_env.observation_space
+        self.action_space = minedojo_env.action_space
+
+    def step(self, action, aciton_mask):
+        if(not self.valid_action(action, aciton_mask)):
+            action = self.minedojo_env.action_space.no_op()
+        total_reward = 0
+        self.obs_buffer = deque(maxlen=2)
+        for _ in range(self.skip):
+            obs, reward, done, info = self.minedojo_env.step(action)
+            self.obs_buffer.append(obs['rgb'])
+            total_reward += reward
+            if done:
+                break
+        if len(self.obs_buffer) == 1:
+            obs_image = self.obs_buffer[0]
+        else:
+            obs_image = np.max(np.stack(self.obs_buffer), axis=0)
+        truncated = False
+        return obs_image, total_reward, done, truncated, {'masks': obs["masks"]}
+
+    def reset(self):
+        self.minedojo_env.seed(self.seed)
+        obs = self.minedojo_env.reset()
+        return obs['rgb'], {'masks': obs["masks"]}
+
+    def render(self, mode='human'):
+        return self.minedojo_env.render(mode=mode)
+
+    def close(self):
+        self.minedojo_env.close()
+
+    def valid_action(self, action, mask):
+        ret = False
+        if (action[5] > 3):
+            if(mask["action_type"][action[5]]):
+                if(action[5] == 4 ): # functional actions 'craft'
+                    if(mask["craft_smelt"][action[6]]):
+                        ret = True
+                elif(action[5] == 5): # functional actions 'equip'
+                    if(mask["equip"][action[7]]):
+                        ret = True
+                elif(action[5] == 6): # functional actions 'place'
+                    if(mask["place"][action[7]]):
+                        ret = True
+                elif(action[5] == 7): # functional actions 'destroy'
+                    if(mask["destroy"][action[7]]):
+                        ret = True
+        else:
+            ret = True
+
+        return ret
 
 
 class LifeLossInfo(gymnasium.Wrapper):

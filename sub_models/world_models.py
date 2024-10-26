@@ -11,9 +11,23 @@ from sub_models.attention_blocks import get_subsequent_mask_with_batch_length, g
 from sub_models.transformer_model import StochasticTransformerKVCache
 import agents
 
+def action_onehot_function(actions, action_dims):
+    ret = []
+    for action, dim in zip(actions, action_dims):
+        ret.append(torch.nn.functional.one_hot(action.long(), num_classes=dim))
+    return ret
+
+def actions2onehot(actions ,action_dims):
+    bl_vec = []
+    for l_actions in actions: # [B ,L, action]
+        l_vec = []
+        for action in l_actions: # [L, action]
+            l_vec.append(torch.cat(action_onehot_function(action,action_dims), dim=0))
+        bl_vec.append(torch.stack(l_vec, dim=0))
+    return torch.stack(bl_vec, dim=0)
 
 class EncoderBN(nn.Module):
-    def __init__(self, in_channels, stem_channels, final_feature_width) -> None:
+    def __init__(self, in_channels, in_width, stem_channels, final_feature_width) -> None:
         super().__init__()
 
         backbone = []
@@ -28,7 +42,7 @@ class EncoderBN(nn.Module):
                 bias=False
             )
         )
-        feature_width = 64//2
+        feature_width = in_width//2
         channels = stem_channels
         backbone.append(nn.BatchNorm2d(stem_channels))
         backbone.append(nn.ReLU(inplace=True))
@@ -214,26 +228,28 @@ class CategoricalKLDivLossWithFreeBits(nn.Module):
 
 
 class WorldModel(nn.Module):
-    def __init__(self, in_channels, action_dim,
+    def __init__(self, in_channels, action_dims,
                  transformer_max_length, transformer_hidden_dim, transformer_num_layers, transformer_num_heads):
         super().__init__()
         self.transformer_hidden_dim = transformer_hidden_dim
-        self.final_feature_width = 4
+        self.final_feature_width = 7
         self.stoch_dim = 32
         self.stoch_flattened_dim = self.stoch_dim*self.stoch_dim
         self.use_amp = True
         self.tensor_dtype = torch.bfloat16 if self.use_amp else torch.float32
         self.imagine_batch_size = -1
         self.imagine_batch_length = -1
+        self.action_dims = action_dims
 
         self.encoder = EncoderBN(
             in_channels=in_channels,
+            in_width=224,
             stem_channels=32,
             final_feature_width=self.final_feature_width
         )
         self.storm_transformer = StochasticTransformerKVCache(
             stoch_dim=self.stoch_flattened_dim,
-            action_dim=action_dim,
+            action_dim=sum(action_dims),
             feat_dim=transformer_hidden_dim,
             num_layers=transformer_num_layers,
             num_heads=transformer_num_heads,
@@ -278,19 +294,19 @@ class WorldModel(nn.Module):
             flattened_sample = self.flatten_sample(sample)
         return flattened_sample
 
-    def calc_last_dist_feat(self, latent, action):
+    def calc_last_dist_feat(self, latent, actions):
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=self.use_amp):
             temporal_mask = get_subsequent_mask(latent)
-            dist_feat = self.storm_transformer(latent, action, temporal_mask)
+            dist_feat = self.storm_transformer(latent, actions2onehot(actions, self.action_dims), temporal_mask)
             last_dist_feat = dist_feat[:, -1:]
             prior_logits = self.dist_head.forward_prior(last_dist_feat)
             prior_sample = self.stright_throught_gradient(prior_logits, sample_mode="random_sample")
             prior_flattened_sample = self.flatten_sample(prior_sample)
         return prior_flattened_sample, last_dist_feat
 
-    def predict_next(self, last_flattened_sample, action, log_video=True):
+    def predict_next(self, last_flattened_sample, actions, log_video=True):
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=self.use_amp):
-            dist_feat = self.storm_transformer.forward_with_kv_cache(last_flattened_sample, action)
+            dist_feat = self.storm_transformer.forward_with_kv_cache(last_flattened_sample, actions2onehot(actions, self.action_dims))
             prior_logits = self.dist_head.forward_prior(dist_feat)
 
             # decoding
@@ -331,10 +347,12 @@ class WorldModel(nn.Module):
             self.imagine_batch_length = imagine_batch_length
             latent_size = (imagine_batch_size, imagine_batch_length+1, self.stoch_flattened_dim)
             hidden_size = (imagine_batch_size, imagine_batch_length+1, self.transformer_hidden_dim)
+            action_size = (imagine_batch_size, imagine_batch_length, len(self.action_dims))
             scalar_size = (imagine_batch_size, imagine_batch_length)
+
             self.latent_buffer = torch.zeros(latent_size, dtype=dtype, device="cuda")
             self.hidden_buffer = torch.zeros(hidden_size, dtype=dtype, device="cuda")
-            self.action_buffer = torch.zeros(scalar_size, dtype=dtype, device="cuda")
+            self.action_buffer = torch.zeros(action_size, dtype=dtype, device="cuda")
             self.reward_hat_buffer = torch.zeros(scalar_size, dtype=dtype, device="cuda")
             self.termination_hat_buffer = torch.zeros(scalar_size, dtype=dtype, device="cuda")
 
@@ -375,7 +393,7 @@ class WorldModel(nn.Module):
 
         return torch.cat([self.latent_buffer, self.hidden_buffer], dim=-1), self.action_buffer, self.reward_hat_buffer, self.termination_hat_buffer
 
-    def update(self, obs, action, reward, termination, logger=None):
+    def update(self, obs, actions, reward, termination, logger=None):
         self.train()
         batch_size, batch_length = obs.shape[:2]
 
@@ -391,7 +409,7 @@ class WorldModel(nn.Module):
 
             # transformer
             temporal_mask = get_subsequent_mask_with_batch_length(batch_length, flattened_sample.device)
-            dist_feat = self.storm_transformer(flattened_sample, action, temporal_mask)
+            dist_feat = self.storm_transformer(flattened_sample, actions2onehot(actions, self.action_dims), temporal_mask)
             prior_logits = self.dist_head.forward_prior(dist_feat)
             # decoding reward and termination with dist_feat
             reward_hat = self.reward_decoder(dist_feat)

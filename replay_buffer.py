@@ -8,16 +8,16 @@ import pickle
 
 
 class ReplayBuffer():
-    def __init__(self, obs_shape, num_envs, max_length=int(1E6), warmup_length=50000, store_on_gpu=False) -> None:
+    def __init__(self, obs_shape, action_dim, num_envs, max_length=int(1E6), warmup_length=50000, store_on_gpu=False) -> None:
         self.store_on_gpu = store_on_gpu
         if store_on_gpu:
             self.obs_buffer = torch.empty((max_length//num_envs, num_envs, *obs_shape), dtype=torch.uint8, device="cuda", requires_grad=False)
-            self.action_buffer = torch.empty((max_length//num_envs, num_envs), dtype=torch.float32, device="cuda", requires_grad=False)
+            self.action_buffer = torch.empty((max_length//num_envs, num_envs, len(action_dim)), dtype=torch.float32, device="cuda", requires_grad=False)
             self.reward_buffer = torch.empty((max_length//num_envs, num_envs), dtype=torch.float32, device="cuda", requires_grad=False)
             self.termination_buffer = torch.empty((max_length//num_envs, num_envs), dtype=torch.float32, device="cuda", requires_grad=False)
         else:
             self.obs_buffer = np.empty((max_length//num_envs, num_envs, *obs_shape), dtype=np.uint8)
-            self.action_buffer = np.empty((max_length//num_envs, num_envs), dtype=np.float32)
+            self.action_buffer = np.empty((max_length//num_envs, num_envs, len(action_dim)), dtype=np.uint8)
             self.reward_buffer = np.empty((max_length//num_envs, num_envs), dtype=np.float32)
             self.termination_buffer = np.empty((max_length//num_envs, num_envs), dtype=np.float32)
 
@@ -73,7 +73,7 @@ class ReplayBuffer():
                 reward.append(external_reward)
                 termination.append(external_termination)
 
-            obs = torch.cat(obs, dim=0).float() / 255
+            obs = torch.cat(obs, dim=0).float()
             obs = rearrange(obs, "B T H W C -> B T C H W")
             action = torch.cat(action, dim=0)
             reward = torch.cat(reward, dim=0)
@@ -107,17 +107,22 @@ class ReplayBuffer():
     def append(self, obs, action, reward, termination):
         # obs/nex_obs: torch Tensor
         # action/reward/termination: int or float or bool
+
+        save_obs = np.array(obs.copy()[np.newaxis,1,2,0])
+        save_action = action # shape(8,)
+        save_reward = np.array([reward])
+        save_termination = np.array([termination])
         self.last_pointer = (self.last_pointer + 1) % (self.max_length//self.num_envs)
         if self.store_on_gpu:
-            self.obs_buffer[self.last_pointer] = torch.from_numpy(obs)
-            self.action_buffer[self.last_pointer] = torch.from_numpy(action)
-            self.reward_buffer[self.last_pointer] = torch.from_numpy(reward)
-            self.termination_buffer[self.last_pointer] = torch.from_numpy(termination)
+            self.obs_buffer[self.last_pointer] = torch.from_numpy(save_obs)
+            self.action_buffer[self.last_pointer] = torch.from_numpy(save_action)
+            self.reward_buffer[self.last_pointer] = torch.from_numpy(save_reward)
+            self.termination_buffer[self.last_pointer] = torch.from_numpy(save_termination)
         else:
-            self.obs_buffer[self.last_pointer] = obs
-            self.action_buffer[self.last_pointer] = action
-            self.reward_buffer[self.last_pointer] = reward
-            self.termination_buffer[self.last_pointer] = termination
+            self.obs_buffer[self.last_pointer] = save_obs
+            self.action_buffer[self.last_pointer] = save_action
+            self.reward_buffer[self.last_pointer] = save_reward
+            self.termination_buffer[self.last_pointer] = save_termination
 
         if len(self) < self.max_length:
             self.length += 1

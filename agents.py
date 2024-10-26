@@ -10,6 +10,7 @@ from torch.cuda.amp import autocast
 from sub_models.functions_losses import SymLogTwoHotLoss
 from utils import EMAScalar
 
+from sub_models.multidiscrete_actor import MultiCategoricalActor
 
 def percentile(x, percentage):
     flat_x = torch.flatten(x)
@@ -56,10 +57,17 @@ class ActorCriticAgent(nn.Module):
                 nn.LayerNorm(hidden_dim),
                 nn.ReLU()
             ])
-        self.actor = nn.Sequential(
-            *actor,
-            nn.Linear(hidden_dim, action_dim)
-        )
+        # self.actor = nn.Sequential(
+        #     *actor,
+        #     nn.Linear(hidden_dim, action_dim)
+        # )
+
+        self.actor = MultiCategoricalActor(       
+            preprocess_net=nn.Sequential(*actor),
+            preprocess_net_dim=hidden_dim,
+            action_dim=action_dim,
+            )
+        self.dist_fn = self.actor.dist_fn
 
         critic = [
             nn.Linear(feat_dim, hidden_dim, bias=False),
@@ -115,9 +123,9 @@ class ActorCriticAgent(nn.Module):
         self.eval()
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=self.use_amp):
             logits = self.policy(latent)
-            dist = distributions.Categorical(logits=logits)
+            dist = self.dist_fn(logits)
             if greedy:
-                action = dist.probs.argmax(dim=-1)
+                action = dist.mode()
             else:
                 action = dist.sample()
         return action
@@ -133,7 +141,8 @@ class ActorCriticAgent(nn.Module):
         self.train()
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=self.use_amp):
             logits, raw_value = self.get_logits_raw_value(latent)
-            dist = distributions.Categorical(logits=logits[:, :-1])
+            # dist = distributions.Categorical(logits=logits[:, :-1])
+            dist = self.dist_fn(logits[:, :-1,:])
             log_prob = dist.log_prob(action)
             entropy = dist.entropy()
 

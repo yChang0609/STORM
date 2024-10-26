@@ -24,13 +24,19 @@ import agents
 from sub_models.functions_losses import symexp
 from sub_models.world_models import WorldModel, MSELoss
 
+# MineDojo
+import minedojo
+from minedojo_env.dense_reward_env import CombatSpiderDenseRewardEnv
 
-def build_single_env(env_name, image_size, seed):
-    env = gymnasium.make(env_name, full_action_space=False, render_mode="rgb_array", frameskip=1)
-    env = env_wrapper.SeedEnvWrapper(env, seed=seed)
-    env = env_wrapper.MaxLast2FrameSkipWrapper(env, skip=4)
-    env = gymnasium.wrappers.ResizeObservation(env, shape=image_size)
-    env = env_wrapper.LifeLossInfo(env)
+def build_single_env(env_name:str, image_size, seed)->gymnasium.Wrapper:
+    task_id = env_name.split("/")[1]
+    env = CombatSpiderDenseRewardEnv(
+        step_penalty=0,
+        attack_reward=1,
+        success_reward=10,
+        image_size=(224,224)
+    )
+    env = env_wrapper.MineDojoGymnasium(minedojo_env=env, seed=seed, skip=4)
     return env
 
 
@@ -86,15 +92,17 @@ def joint_train_world_model_agent(env_name, max_steps, num_envs, image_size,
 
     # build vec env, not useful in the Atari100k setting
     # but when the max_steps is large, you can use parallel envs to speed up
-    vec_env = build_vec_env(env_name, image_size, num_envs=num_envs, seed=seed)
+    num_envs=1
+    vec_env = build_single_env(env_name, image_size, seed=seed)
     print("Current env: " + colorama.Fore.YELLOW + f"{env_name}" + colorama.Style.RESET_ALL)
 
     # reset envs and variables
     sum_reward = np.zeros(num_envs)
     current_obs, current_info = vec_env.reset()
+    action_mask = current_info['masks']
     context_obs = deque(maxlen=16)
     context_action = deque(maxlen=16)
-
+    
     # sample and train
     for total_steps in tqdm(range(max_steps//num_envs)):
         # sample part >>>
@@ -106,26 +114,29 @@ def joint_train_world_model_agent(env_name, max_steps, num_envs, image_size,
                     action = vec_env.action_space.sample()
                 else:
                     context_latent = world_model.encode_obs(torch.cat(list(context_obs), dim=1))
-                    model_context_action = np.stack(list(context_action), axis=1)
-                    model_context_action = torch.Tensor(model_context_action).cuda()
+                    model_context_action = np.stack(list(context_action), axis=0)
+                    model_context_action = torch.Tensor(model_context_action.reshape(1, *model_context_action.shape)).cuda() #[np.newaxis, 0, 1]
                     prior_flattened_sample, last_dist_feat = world_model.calc_last_dist_feat(context_latent, model_context_action)
                     action = agent.sample_as_env_action(
                         torch.cat([prior_flattened_sample, last_dist_feat], dim=-1),
                         greedy=False
                     )
-
-            context_obs.append(rearrange(torch.Tensor(current_obs).cuda(), "B H W C -> B 1 C H W")/255)
+                    action = np.squeeze(action)
+            context_obs.append(rearrange(torch.Tensor(current_obs.copy()).cuda(), "C H W -> 1 1 C H W")/255) # [one env , len obs ,(obs) ]
             context_action.append(action)
+
         else:
             action = vec_env.action_space.sample()
 
-        obs, reward, done, truncated, info = vec_env.step(action)
-        replay_buffer.append(current_obs, action, reward, np.logical_or(done, info["life_loss"]))
+        obs, reward, done, truncated, info = vec_env.step(action, action_mask)
+        replay_buffer.append(current_obs, action, reward, done)
 
+        done = np.array([truncated])
+        done = np.array([done])
         done_flag = np.logical_or(done, truncated)
-        if done_flag.any():
+        if done_flag.any() :
             for i in range(num_envs):
-                if done_flag[i]:
+                if done_flag:
                     logger.log(f"sample/{env_name}_reward", sum_reward[i])
                     logger.log(f"sample/{env_name}_episode_steps", current_info["episode_frame_number"][i]//4)  # framskip=4
                     logger.log("replay_buffer/length", len(replay_buffer))
@@ -135,8 +146,9 @@ def joint_train_world_model_agent(env_name, max_steps, num_envs, image_size,
         sum_reward += reward
         current_obs = obs
         current_info = info
+        action_mask = info['masks']
         # <<< sample part
-
+        
         # train world model part >>>
         if replay_buffer.ready() and total_steps % (train_dynamics_every_steps//num_envs) == 0:
             train_world_model_step(
@@ -186,10 +198,10 @@ def joint_train_world_model_agent(env_name, max_steps, num_envs, image_size,
             torch.save(agent.state_dict(), f"ckpt/{args.n}/agent_{total_steps}.pth")
 
 
-def build_world_model(conf, action_dim):
+def build_world_model(conf, action_dims):
     return WorldModel(
         in_channels=conf.Models.WorldModel.InChannels,
-        action_dim=action_dim,
+        action_dims=action_dims,
         transformer_max_length=conf.Models.WorldModel.TransformerMaxLength,
         transformer_hidden_dim=conf.Models.WorldModel.TransformerHiddenDim,
         transformer_num_layers=conf.Models.WorldModel.TransformerNumLayers,
@@ -238,26 +250,28 @@ if __name__ == "__main__":
     if conf.Task == "JointTrainAgent":
         # getting action_dim with dummy env
         dummy_env = build_single_env(args.env_name, conf.BasicSettings.ImageSize, seed=0)
-        action_dim = dummy_env.action_space.n
+        action_dims = list(dummy_env.action_space.nvec)
 
         # build world model and agent
-        world_model = build_world_model(conf, action_dim)
-        agent = build_agent(conf, action_dim)
+        world_model = build_world_model(conf, action_dims)
+        agent = build_agent(conf, action_dims)
 
+        
         # build replay buffer
         replay_buffer = ReplayBuffer(
             obs_shape=(conf.BasicSettings.ImageSize, conf.BasicSettings.ImageSize, 3),
+            action_dim=action_dims,
             num_envs=conf.JointTrainAgent.NumEnvs,
             max_length=conf.JointTrainAgent.BufferMaxLength,
             warmup_length=conf.JointTrainAgent.BufferWarmUp,
-            store_on_gpu=conf.BasicSettings.ReplayBufferOnGPU
+            store_on_gpu=conf.BasicSettings.ReplayBufferOnGPU,
         )
-
+        
         # judge whether to load demonstration trajectory
         if conf.JointTrainAgent.UseDemonstration:
             print(colorama.Fore.MAGENTA + f"loading demonstration trajectory from {args.trajectory_path}" + colorama.Style.RESET_ALL)
             replay_buffer.load_trajectory(path=args.trajectory_path)
-
+        
         # train
         joint_train_world_model_agent(
             env_name=args.env_name,
