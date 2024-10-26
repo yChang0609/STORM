@@ -108,7 +108,7 @@ class ReplayBuffer():
         # obs/nex_obs: torch Tensor
         # action/reward/termination: int or float or bool
 
-        save_obs = np.array(obs.copy()[np.newaxis,1,2,0])
+        save_obs = np.transpose(np.expand_dims(obs, axis=0), (0, 2, 3, 1)).copy() # [C H W] -> [1 C H W] -> [1 H W C]
         save_action = action # shape(8,)
         save_reward = np.array([reward])
         save_termination = np.array([termination])

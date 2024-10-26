@@ -122,6 +122,9 @@ def joint_train_world_model_agent(env_name, max_steps, num_envs, image_size,
                         greedy=False
                     )
                     action = np.squeeze(action)
+            # if(len(context_obs) == 16):
+            #     logger.log("Imagine/test_video", torch.clamp(torch.cat(list(context_obs), dim=1), 0, 1).cpu().float().detach().numpy())
+
             context_obs.append(rearrange(torch.Tensor(current_obs.copy()).cuda(), "C H W -> 1 1 C H W")/255) # [one env , len obs ,(obs) ]
             context_action.append(action)
 
@@ -129,6 +132,8 @@ def joint_train_world_model_agent(env_name, max_steps, num_envs, image_size,
             action = vec_env.action_space.sample()
 
         obs, reward, done, truncated, info = vec_env.step(action, action_mask)
+        # print(current_obs.shape)
+        # logger.log("Sample/test_images", current_obs[np.newaxis,:,:,:]/255)
         replay_buffer.append(current_obs, action, reward, done)
 
         done = np.array([truncated])

@@ -20,7 +20,7 @@ JointTrainAgent:
   TrainDynamicsEverySteps: 1
   TrainAgentEverySteps: 1
   UseDemonstration: False
-  SaveEverySteps: 1500
+  SaveEverySteps: 1030
 
 Models:
   WorldModel:
