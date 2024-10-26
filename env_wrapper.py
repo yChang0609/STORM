@@ -32,12 +32,12 @@ class MineDojoGymnasium(gymnasium.Env):
         else:
             obs_image = np.max(np.stack(self.obs_buffer), axis=0)
         truncated = False
-        return obs_image, total_reward, done, truncated, {'masks': obs["masks"]}
+        return obs_image, total_reward, done, truncated, {'masks': obs["masks"], 'elapsed_steps':info['elapsed_steps']}
 
     def reset(self):
         self.minedojo_env.seed(self.seed)
         obs = self.minedojo_env.reset()
-        return obs['rgb'], {'masks': obs["masks"]}
+        return obs['rgb'], {'masks': obs["masks"], 'elapsed_steps':0}
 
     def render(self, mode='human'):
         return self.minedojo_env.render(mode=mode)

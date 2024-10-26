@@ -116,6 +116,7 @@ class CombatSpiderDenseRewardEnv(MobCombatDenseRewardWrapper):
     def step(self, action):
         obs, reward, done, info = super().step(action)
         self._elapsed_steps += 1
+        info['elapsed_steps'] = self._elapsed_steps
         if self._elapsed_steps >= self._episode_len:
             done = True
         return obs, reward, done, info

@@ -149,7 +149,7 @@ def joint_train_world_model_agent(env_name, max_steps, num_envs, image_size,
             for i in range(num_envs):
                 if done_flag:
                     logger.log(f"sample/{env_name}_reward", sum_reward[i])
-                    logger.log(f"sample/{env_name}_episode_steps", current_info["episode_frame_number"][i]//4)  # framskip=4
+                    logger.log(f"sample/{env_name}_episode_steps", current_info["elapsed_steps"]//4)
                     logger.log("replay_buffer/length", len(replay_buffer))
                     sum_reward[i] = 0
                     current_obs, current_info = vec_env.reset()
