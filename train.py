@@ -136,7 +136,13 @@ def joint_train_world_model_agent(env_name, max_steps, num_envs, image_size,
         # logger.log("Sample/test_images", current_obs[np.newaxis,:,:,:]/255)
         replay_buffer.append(current_obs, action, reward, done)
 
-        done = np.array([truncated])
+        # update current_obs, current_info and sum_reward
+        sum_reward += reward
+        current_obs = obs
+        current_info = info
+        action_mask = info['masks']
+
+        truncated = np.array([truncated])
         done = np.array([done])
         done_flag = np.logical_or(done, truncated)
         if done_flag.any() :
@@ -146,12 +152,8 @@ def joint_train_world_model_agent(env_name, max_steps, num_envs, image_size,
                     logger.log(f"sample/{env_name}_episode_steps", current_info["episode_frame_number"][i]//4)  # framskip=4
                     logger.log("replay_buffer/length", len(replay_buffer))
                     sum_reward[i] = 0
-
-        # update current_obs, current_info and sum_reward
-        sum_reward += reward
-        current_obs = obs
-        current_info = info
-        action_mask = info['masks']
+                    current_obs, current_info = vec_env.reset()
+                    action_mask = current_info['masks']
         # <<< sample part
         
         # train world model part >>>
