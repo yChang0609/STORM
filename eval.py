@@ -53,51 +53,89 @@ def eval_episodes(num_episode, env_name, max_steps, num_envs, image_size,
                   world_model: WorldModel, agent: agents.ActorCriticAgent):
     world_model.eval()
     agent.eval()
-    vec_env = build_vec_env(env_name, image_size, num_envs=num_envs)
+    vec_env = train.build_single_env(env_name, image_size, seed=1)
     print("Current env: " + colorama.Fore.YELLOW + f"{env_name}" + colorama.Style.RESET_ALL)
     sum_reward = np.zeros(num_envs)
     current_obs, current_info = vec_env.reset()
+    action_mask = current_info['masks']
     context_obs = deque(maxlen=16)
     context_action = deque(maxlen=16)
+
+    save_frames = []
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v') 
+    fps = 30
+    frame_size = (224, 224) 
 
     final_rewards = []
     # for total_steps in tqdm(range(max_steps//num_envs)):
     while True:
+        save_frames += [cv2.cvtColor(current_obs.transpose(1, 2, 0), cv2.COLOR_RGB2BGR)]*4
         # sample part >>>
         with torch.no_grad():
             if len(context_action) == 0:
                 action = vec_env.action_space.sample()
             else:
                 context_latent = world_model.encode_obs(torch.cat(list(context_obs), dim=1))
-                model_context_action = np.stack(list(context_action), axis=1)
-                model_context_action = torch.Tensor(model_context_action).cuda()
+                model_context_action = np.stack(list(context_action), axis=0)
+                model_context_action = torch.Tensor(model_context_action.reshape(1, *model_context_action.shape)).cuda() #[np.newaxis, 0, 1]
                 prior_flattened_sample, last_dist_feat = world_model.calc_last_dist_feat(context_latent, model_context_action)
                 action = agent.sample_as_env_action(
                     torch.cat([prior_flattened_sample, last_dist_feat], dim=-1),
                     greedy=False
                 )
-
-        context_obs.append(rearrange(torch.Tensor(current_obs).cuda(), "B H W C -> B 1 C H W")/255)
+                action = np.squeeze(action)
+        context_obs.append(rearrange(torch.Tensor(current_obs.copy()).cuda(), "C H W -> 1 1 C H W")/255)
         context_action.append(action)
 
-        obs, reward, done, truncated, info = vec_env.step(action)
+        obs, reward, done, truncated, info = vec_env.step(action, action_mask)
         # cv2.imshow("current_obs", process_visualize(obs[0]))
         # cv2.waitKey(10)
-
-        done_flag = np.logical_or(done, truncated)
-        if done_flag.any():
-            for i in range(num_envs):
-                if done_flag[i]:
-                    final_rewards.append(sum_reward[i])
-                    sum_reward[i] = 0
-                    if len(final_rewards) == num_episode:
-                        print("Mean reward: " + colorama.Fore.YELLOW + f"{np.mean(final_rewards)}" + colorama.Style.RESET_ALL)
-                        return np.mean(final_rewards)
 
         # update current_obs, current_info and sum_reward
         sum_reward += reward
         current_obs = obs
         current_info = info
+        action_mask = info['masks']
+
+        truncated = np.array([truncated])
+        done = np.array([done])
+        done_flag = np.logical_or(done, truncated)
+        if done_flag.any():
+            for i in range(num_envs):
+                if done_flag:
+                    final_rewards.append(sum_reward[i])
+                    
+                    # insert done_frame
+                    done_frame = np.ones((224, 224, 3), dtype=np.uint8) * 255
+                    text = f"Ep{len(final_rewards)}:{sum_reward[i]}"
+                    font = cv2.FONT_HERSHEY_SIMPLEX
+                    font_scale = 1
+                    thickness = 2
+                    (text_width, text_height), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+                    text_x = (done_frame.shape[1] - text_width) // 2  
+                    text_y = (done_frame.shape[0] + text_height) // 2  
+                    position = (text_x, text_y)  
+                    cv2.putText(
+                        done_frame, 
+                        text, position, cv2.FONT_HERSHEY_SIMPLEX,
+                        1, (0, 0, 0), 2,
+                        cv2.LINE_AA      
+                    )
+                    save_frames += [done_frame]*16
+
+                    # print(f"save_frames len - {len(final_rewards)}:{len(save_frames)} / {sum_reward[i]}")
+                    sum_reward[i] = 0
+                    current_obs, current_info = vec_env.reset()
+                    action_mask = current_info['masks']
+                    if len(final_rewards) == num_episode:
+                        # save video
+                        # save_frames += [cv2.cvtColor(current_obs.transpose(1, 2, 0), cv2.COLOR_RGB2BGR)]*4
+                        print("Mean reward: " + colorama.Fore.YELLOW + f"{np.mean(final_rewards)}" + colorama.Style.RESET_ALL)
+                        out = cv2.VideoWriter(f"eval_result/MineDojo/episodes{num_episode}_{np.mean(final_rewards)}.mp4", fourcc, fps, frame_size)
+                        for frame in save_frames:
+                            out.write(frame)
+                        out.release()
+                        return np.mean(final_rewards)
         # <<< sample part
 
 
@@ -123,10 +161,12 @@ if __name__ == "__main__":
 
     # build and load model/agent
     import train
-    dummy_env = build_single_env(args.env_name, conf.BasicSettings.ImageSize)
-    action_dim = dummy_env.action_space.n
-    world_model = train.build_world_model(conf, action_dim)
-    agent = train.build_agent(conf, action_dim)
+    dummy_env = train.build_single_env(args.env_name, conf.BasicSettings.ImageSize,seed=1)
+    action_dims = list(dummy_env.action_space.nvec)
+
+    # build world model and agent
+    world_model = train.build_world_model(conf, action_dims)
+    agent = train.build_agent(conf, action_dims)
     root_path = f"ckpt/{args.run_name}"
 
     import glob
@@ -143,7 +183,7 @@ if __name__ == "__main__":
         episode_avg_return = eval_episodes(
             num_episode=20,
             env_name=args.env_name,
-            num_envs=5,
+            num_envs=1,
             max_steps=conf.JointTrainAgent.SampleMaxSteps,
             image_size=conf.BasicSettings.ImageSize,
             world_model=world_model,

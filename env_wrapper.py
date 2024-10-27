@@ -20,7 +20,7 @@ class MineDojoGymnasium(gymnasium.Env):
         if(not self.valid_action(action, aciton_mask)):
             action = self.minedojo_env.action_space.no_op()
         total_reward = 0
-        self.obs_buffer = deque(maxlen=2)
+        self.obs_buffer = deque(maxlen=4)
         for _ in range(self.skip):
             obs, reward, done, info = self.minedojo_env.step(action)
             self.obs_buffer.append(obs['rgb'])
@@ -30,7 +30,7 @@ class MineDojoGymnasium(gymnasium.Env):
         if len(self.obs_buffer) == 1:
             obs_image = self.obs_buffer[0]
         else:
-            obs_image = np.max(np.stack(self.obs_buffer), axis=0)
+            obs_image = self.obs_buffer.pop()#np.max(np.stack(self.obs_buffer), axis=0)
         truncated = False
         return obs_image, total_reward, done, truncated, {'masks': obs["masks"], 'elapsed_steps':info['elapsed_steps']}
 
