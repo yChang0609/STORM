@@ -69,7 +69,8 @@ def eval_episodes(num_episode, env_name, max_steps, num_envs, image_size,
     final_rewards = []
     # for total_steps in tqdm(range(max_steps//num_envs)):
     while True:
-        save_frames += [cv2.cvtColor(current_obs.transpose(1, 2, 0), cv2.COLOR_RGB2BGR)]*4
+        # save_frames += [cv2.cvtColor(current_obs.transpose(1, 2, 0), cv2.COLOR_RGB2BGR)]*4
+        save_frames.extend([cv2.cvtColor(obs.transpose(1, 2, 0), cv2.COLOR_RGB2BGR) for obs in current_info['all_obs']])
         # sample part >>>
         with torch.no_grad():
             if len(context_action) == 0:

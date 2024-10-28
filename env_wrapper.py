@@ -17,27 +17,39 @@ class MineDojoGymnasium(gymnasium.Env):
         self.action_space = minedojo_env.action_space
 
     def step(self, action, aciton_mask):
-        if(not self.valid_action(action, aciton_mask)):
-            action = self.minedojo_env.action_space.no_op()
         total_reward = 0
-        self.obs_buffer = deque(maxlen=4)
+        self.obs_buffer = deque(maxlen=2)
+        all_obs = []
         for _ in range(self.skip):
-            obs, reward, done, info = self.minedojo_env.step(action)
+            exe_action = action if self.valid_action(action, aciton_mask) else self.minedojo_env.action_space.no_op()
+            obs, reward, done, info = self.minedojo_env.step(exe_action)
+            aciton_mask = obs["masks"]
             self.obs_buffer.append(obs['rgb'])
+            all_obs.append(obs['rgb'])
             total_reward += reward
             if done:
                 break
         if len(self.obs_buffer) == 1:
             obs_image = self.obs_buffer[0]
         else:
-            obs_image = self.obs_buffer.pop()#np.max(np.stack(self.obs_buffer), axis=0)
+            obs_image = np.max(np.stack(self.obs_buffer), axis=0)
         truncated = False
-        return obs_image, total_reward, done, truncated, {'masks': obs["masks"], 'elapsed_steps':info['elapsed_steps']}
+        return obs_image, total_reward, done, truncated, \
+                {
+                    'masks': aciton_mask, 
+                    'elapsed_steps':info['elapsed_steps'],
+                    'all_obs':all_obs
+                }
 
     def reset(self):
         self.minedojo_env.seed(self.seed)
         obs = self.minedojo_env.reset()
-        return obs['rgb'], {'masks': obs["masks"], 'elapsed_steps':0}
+        return obs['rgb'],\
+            {
+                'masks': obs["masks"], 
+                'elapsed_steps':1,
+                'all_obs':[obs['rgb']]
+            }
 
     def render(self, mode='human'):
         return self.minedojo_env.render(mode=mode)
@@ -65,6 +77,11 @@ class MineDojoGymnasium(gymnasium.Env):
             ret = True
 
         return ret
+    
+    def limit_action(self, action):
+        limit_values = [10, 11, 12, 13, 14]
+        action[3] = limit_values[action[3] // len(limit_values)]
+        return action
 
 
 class LifeLossInfo(gymnasium.Wrapper):

@@ -36,7 +36,7 @@ def build_single_env(env_name:str, image_size, seed)->gymnasium.Wrapper:
         success_reward=10,
         image_size=(224,224)
     )
-    env = env_wrapper.MineDojoGymnasium(minedojo_env=env, seed=seed, skip=4)
+    env = env_wrapper.MineDojoGymnasium(minedojo_env=env, seed=seed, skip=1)
     return env
 
 
