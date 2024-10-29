@@ -11,6 +11,8 @@ from sub_models.attention_blocks import get_subsequent_mask_with_batch_length, g
 from sub_models.transformer_model import StochasticTransformerKVCache
 import agents
 
+from sub_models.utils.function import actions2onehot
+
 # JEPA
 from torchvision import transforms
 import sub_models.model.VAE.categorical_vae as cate_vae
@@ -71,15 +73,13 @@ def load_encoder(
         if frozen:
             for param in encoder.parameters():
                 param.requires_grad = False
-        
 
-            
         print(f'loaded pretrained encoder from epoch {epoch}')
         print(f'jepa model from read-path: {r_path}')
         del checkpoint
 
     except Exception as e:
-        print(f'Encountered exception when loading checkpoint {e}')
+        print(f'Encountered exception when loading checkpoint:{e}')
         epoch = 0
 
     return encoder
@@ -172,7 +172,7 @@ class CategoricalKLDivLossWithFreeBits(nn.Module):
 
 class JEPABaseWorldModel(nn.Module):
     def __init__(self, 
-                 in_channels, in_width, action_dim,
+                 in_channels, in_width, action_dims,
                  patch_size, jepa_size, jepa_load_path:tuple,
                  transformer_max_length, transformer_hidden_dim, transformer_num_layers, transformer_num_heads,
                  use_amp=True):
@@ -218,10 +218,11 @@ class JEPABaseWorldModel(nn.Module):
         self.tensor_dtype = torch.bfloat16 if self.use_amp else torch.float32
         self.imagine_batch_size = -1
         self.imagine_batch_length = -1
+        self.action_dims = action_dims
 
         self.storm_transformer = StochasticTransformerKVCache(
             stoch_dim=self.stoch_flattened_dim,
-            action_dim=action_dim,
+            action_dim=sum(action_dims),
             feat_dim=transformer_hidden_dim,
             num_layers=transformer_num_layers,
             num_heads=transformer_num_heads,
@@ -285,19 +286,19 @@ class JEPABaseWorldModel(nn.Module):
             flattened_sample = rearrange(sample, "(B L) K C  -> B L (K C)",B=batch_size, K=self.stoch_dim, C=self.stoch_dim)
         return flattened_sample, embedding
 
-    def calc_last_dist_feat(self, latent, action):
+    def calc_last_dist_feat(self, latent, actions):
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=self.use_amp):
             temporal_mask = get_subsequent_mask(latent)
-            dist_feat = self.storm_transformer(latent, action, temporal_mask)
+            dist_feat = self.storm_transformer(latent, actions2onehot(actions, self.action_dims), temporal_mask)
             last_dist_feat = dist_feat[:, -1:]
             prior_logits = self.dist_head.forward_prior(last_dist_feat)
             prior_sample = self.stright_throught_gradient(prior_logits, sample_mode="random_sample")
             prior_flattened_sample = self.flatten_sample(prior_sample)
         return prior_flattened_sample, last_dist_feat
 
-    def predict_next(self, last_flattened_sample, action, log_video=True):
+    def predict_next(self, last_flattened_sample, actions, log_video=True):
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=self.use_amp):
-            dist_feat = self.storm_transformer.forward_with_kv_cache(last_flattened_sample, action)
+            dist_feat = self.storm_transformer.forward_with_kv_cache(last_flattened_sample, actions2onehot(actions, self.action_dims))
             prior_logits = self.dist_head.forward_prior(dist_feat)
 
             # decoding
@@ -339,10 +340,12 @@ class JEPABaseWorldModel(nn.Module):
             self.imagine_batch_length = imagine_batch_length
             latent_size = (imagine_batch_size, imagine_batch_length+1, self.stoch_flattened_dim)
             hidden_size = (imagine_batch_size, imagine_batch_length+1, self.transformer_hidden_dim)
+            action_size = (imagine_batch_size, imagine_batch_length, len(self.action_dims))
             scalar_size = (imagine_batch_size, imagine_batch_length)
+
             self.latent_buffer = torch.zeros(latent_size, dtype=dtype, device="cuda")
             self.hidden_buffer = torch.zeros(hidden_size, dtype=dtype, device="cuda")
-            self.action_buffer = torch.zeros(scalar_size, dtype=dtype, device="cuda")
+            self.action_buffer = torch.zeros(action_size, dtype=dtype, device="cuda")
             self.reward_hat_buffer = torch.zeros(scalar_size, dtype=dtype, device="cuda")
             self.termination_hat_buffer = torch.zeros(scalar_size, dtype=dtype, device="cuda")
 
@@ -379,13 +382,13 @@ class JEPABaseWorldModel(nn.Module):
                 obs_hat_list.append(last_obs_hat[::imagine_batch_size//16])  # uniform sample vec_env
 
         if log_video:
-            logger.log("Imagine/orig_video", torch.clamp(sample_obs[::imagine_batch_size//16], 0, 1).cpu().float().detach().numpy())
-            logger.log("Imagine/jepa_video", torch.clamp(tensor_unormalize(self.jepa_decoder.decode_video(embedding[::imagine_batch_size//16])), 0, 1).cpu().float().detach().numpy())
+            logger.log("Imagine/sample_video", torch.clamp(sample_obs[::imagine_batch_size//16], 0, 1).cpu().float().detach().numpy())
+            logger.log("Imagine/jepa_rec_video", torch.clamp(tensor_unormalize(self.jepa_decoder.decode_video(embedding[::imagine_batch_size//16])), 0, 1).cpu().float().detach().numpy())
             logger.log("Imagine/predict_video", torch.clamp(tensor_unormalize(torch.cat(obs_hat_list, dim=1)), 0, 1).cpu().float().detach().numpy())
 
         return torch.cat([self.latent_buffer, self.hidden_buffer], dim=-1), self.action_buffer, self.reward_hat_buffer, self.termination_hat_buffer
 
-    def update(self, obs, action, reward, termination, logger=None):
+    def update(self, obs, actions, reward, termination, logger=None):
         self.train()
         batch_size, batch_length = obs.shape[:2]
 
@@ -405,7 +408,7 @@ class JEPABaseWorldModel(nn.Module):
 
             # transformer
             temporal_mask = get_subsequent_mask_with_batch_length(batch_length, flattened_sample.device)
-            dist_feat = self.storm_transformer(flattened_sample, action, temporal_mask)
+            dist_feat = self.storm_transformer(flattened_sample, actions2onehot(actions, self.action_dims), temporal_mask)
             prior_logits = self.dist_head.forward_prior(dist_feat)
             # decoding reward and termination with dist_feat
             reward_hat = self.reward_decoder(dist_feat)

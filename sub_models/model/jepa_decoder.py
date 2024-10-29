@@ -79,7 +79,7 @@ def load_jepa_decoder(
         if frozen:
             for param in decoder.parameters():
                 param.requires_grad = False
-        print(f'loaded pretrained encoder from epoch {epoch}')
+        print(f'loaded pretrained decoder from epoch {epoch}')
         print(f'jepa model from read-path: {r_path}')
         del checkpoint
 

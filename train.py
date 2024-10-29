@@ -127,7 +127,7 @@ def joint_train_world_model_agent(env_name, max_steps, num_envs, image_size,
             # if(len(context_obs) == 16):
             #     logger.log("Imagine/test_video", torch.clamp(torch.cat(list(context_obs), dim=1), 0, 1).cpu().float().detach().numpy())
 
-            context_obs.append(rearrange(torch.Tensor(current_obs.copy()).cuda(), "B H W C -> B 1 C H W"))
+            context_obs.append(rearrange(torch.Tensor(current_obs.copy()).cuda(), "C H W -> 1 1 C H W")/255) # [one env , len obs ,(obs) ]
             context_action.append(action)
 
         else:
@@ -212,12 +212,12 @@ def build_world_model(conf, action_dims):
     return WorldModel(
         in_channels=conf.Models.WorldModel.InChannels,
         in_width=conf.BasicSettings.ImageSize,
-        action_dim=action_dims,
-        patch_size=4,
-        jepa_size='vit_tiny',
+        action_dims=action_dims,
+        patch_size=16,
+        jepa_size='vit_small',
         jepa_load_path=(
-            "/home/cgv/Documents/project/EmbodiedAgent/i-jepa/logs/vae/in-tiny_vit-t4_Best_ep100_S200_notShuffle/jepa-latest.pth.tar",
-            "/home/cgv/Documents/project/EmbodiedAgent/i-jepa/logs/vae/in-tiny_vit-t4_Best_ep100_S200_notShuffle/vae-categorical-latest.pth.tar"
+            "/home/cgv/Documents/project/EmbodiedAgent/i-jepa/logs/mine/mine-tiny_vit-s16_ep100/jepa-latest.pth.tar",
+            "/home/cgv/Documents/project/EmbodiedAgent/i-jepa/logs/mine/mine-tiny_vit-s16_ep100/vae-normal-latest.pth.tar"
         ),
         transformer_max_length=conf.Models.WorldModel.TransformerMaxLength,
         transformer_hidden_dim=conf.Models.WorldModel.TransformerHiddenDim,
@@ -254,8 +254,8 @@ if __name__ == "__main__":
     parser.add_argument("-trajectory_path", type=str, required=True)
     args = parser.parse_args()
     conf = load_config(args.config_path)
-    # print(colorama.Fore.RED + str(args) + colorama.Style.RESET_ALL)
-    print(str(args))
+    print(colorama.Fore.RED + str(args) + colorama.Style.RESET_ALL)
+    # print(str(args))
 
     # set seed
     seed_np_torch(seed=args.seed)

@@ -9,7 +9,7 @@
 env_name=MineDojo/Combat_Spider
 
 MINEDOJO_HEADLESS=1 python -u train.py \
-    -n "${env_name}-100k-seed1" \
+    -n "${env_name}-100k-seed1-jepa_wm" \
     -seed 1 \
     -config_path "config_files/STORM.yaml" \
     -env_name "${env_name}" \
