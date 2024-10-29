@@ -22,7 +22,9 @@ from replay_buffer import ReplayBuffer
 import env_wrapper
 import agents
 from sub_models.functions_losses import symexp
-from sub_models.world_models import WorldModel, MSELoss
+# from sub_models.world_models import WorldModel, MSELoss
+from sub_models.jepa_world_models import JEPABaseWorldModel as WorldModel
+
 
 
 def process_visualize(img):
@@ -76,7 +78,7 @@ def eval_episodes(num_episode, env_name, max_steps, num_envs, image_size,
             if len(context_action) == 0:
                 action = vec_env.action_space.sample()
             else:
-                context_latent = world_model.encode_obs(torch.cat(list(context_obs), dim=1))
+                context_latent,_ = world_model.encode_obs(torch.cat(list(context_obs), dim=1))
                 model_context_action = np.stack(list(context_action), axis=0)
                 model_context_action = torch.Tensor(model_context_action.reshape(1, *model_context_action.shape)).cuda() #[np.newaxis, 0, 1]
                 prior_flattened_sample, last_dist_feat = world_model.calc_last_dist_feat(context_latent, model_context_action)
@@ -154,7 +156,7 @@ if __name__ == "__main__":
     parser.add_argument("-run_name", type=str, required=True)
     args = parser.parse_args()
     conf = load_config(args.config_path)
-    print(colorama.Fore.RED + str(args) + colorama.Style.RESET_ALL)
+    print(str(args))
     # print(colorama.Fore.RED + str(conf) + colorama.Style.RESET_ALL)
 
     # set seed
