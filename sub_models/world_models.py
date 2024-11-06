@@ -271,7 +271,7 @@ class WorldModel(nn.Module):
         self.symlog_twohot_loss_func = SymLogTwoHotLoss(num_classes=255, lower_bound=-20, upper_bound=20)
         self.categorical_kl_div_loss = CategoricalKLDivLossWithFreeBits(free_bits=1)
         self.optimizer = torch.optim.Adam(self.parameters(), lr=1e-4)
-        self.scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
+        self.scaler = torch.amp.GradScaler("cuda", enabled=self.use_amp)
 
     def encode_obs(self, obs):
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=self.use_amp):

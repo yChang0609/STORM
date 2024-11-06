@@ -91,7 +91,7 @@ class ActorCriticAgent(nn.Module):
         self.upperbound_ema = EMAScalar(decay=0.99)
 
         self.optimizer = torch.optim.Adam(self.parameters(), lr=3e-5, eps=1e-5)
-        self.scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
+        self.scaler = torch.amp.GradScaler("cuda", enabled=self.use_amp)
 
     @torch.no_grad()
     def update_slow_critic(self, decay=0.98):
