@@ -6,11 +6,9 @@
 #     -env_name "ALE/${env_name}-v5" \
 #     -trajectory_path "D_TRAJ/${env_name}.pkl" 
 
-env_name=MineDojo/Combat_Spider
+env_name=CombatSpider
 
 MINEDOJO_HEADLESS=1 python -u train.py \
-    -n "${env_name}-100k-seed1-jepa_wm" \
+    -log "${env_name}-100k-seed1-STORM" \
     -seed 1 \
-    -config_path "config_files/STORM.yaml" \
-    -env_name "${env_name}" \
-    -trajectory_path "D_TRAJ/${env_name}.pkl" 
+    -config "config_files/100K_CombatSpider_STORM.yaml" \

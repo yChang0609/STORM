@@ -1,0 +1,54 @@
+Task: "JointTrainAgent"
+Environment:
+  task: "CombatSpider"
+  task_parameter:
+    image_size: [224,224]
+    step_penalty: 0
+    attack_reward: 1
+    success_reward: 10
+    # max_spawn_range: 10
+    # target_quantities: 1
+    # max_episode_len: 500
+  seed: 123
+ 
+  action_space: "ReducedActionSpace"
+  observation: "DefaultObservation" #ImageObservation
+
+BasicSettings:
+  Seed: 0
+  ImageSize: 224
+  ReplayBufferOnGPU: False
+
+JointTrainAgent:
+  SampleMaxSteps: 102000 #102000
+  BufferMaxLength: 100000 #100000
+  BufferWarmUp: 1024 #1024
+  NumEnvs: 1
+  BatchSize: 16
+  DemonstrationBatchSize: 4
+  BatchLength: 64
+  ImagineBatchSize: 64
+  ImagineDemonstrationBatchSize: 256
+  ImagineContextLength: 8
+  ImagineBatchLength: 16
+  TrainDynamicsEverySteps: 1
+  TrainAgentEverySteps: 1
+  UseDemonstration: False
+  SaveEverySteps: 2500
+
+Models:
+  WorldModel:
+    InChannels: 3
+    TransformerMaxLength: 64
+    TransformerHiddenDim: 512
+    TransformerNumLayers: 2
+    TransformerNumHeads: 8
+
+  Agent:
+    NumLayers: 2
+    HiddenDim: 512
+    Gamma: 0.985
+    Lambda: 0.95
+    EntropyCoef: 3E-4
+    
+
