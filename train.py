@@ -3,8 +3,6 @@ import argparse
 import numpy as np
 from einops import rearrange
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 from collections import deque
 from tqdm import tqdm
 import colorama
@@ -13,18 +11,15 @@ import os
 import yaml
 import pprint
 
-from utils import seed_np_torch, Logger, load_config
-from sub_models.functions_losses import symexp
+from utils.utils import seed_np_torch, Logger
 from libs.env_wrapper import MineDojoGymnasium
 
-# from sub_models.world_models import WorldModel, MSELoss
-from sub_models.jepa_world_models import JEPABaseWorldModel as WorldModel
-import agents
-from replay_buffer import ReplayBuffer
+from world_models.world_model_base import WorldModelBase
+import agents.agents as agents
+from utils.replay_buffer import ReplayBuffer
 
 # MineDojo
 from libs.mine_env import build_env
-from stable_baselines3.common.env_util import make_vec_env
 
 def build_single_env(params, seed = None)->gymnasium.Wrapper:
     env = build_env(params, seed)
@@ -44,13 +39,13 @@ def build_vec_env(env_name, image_size, num_envs, seed):
     vec_env = gymnasium.vector.AsyncVectorEnv(env_fns=env_fns)
     return vec_env
 
-def train_world_model_step(replay_buffer: ReplayBuffer, world_model: WorldModel, batch_size, demonstration_batch_size, batch_length, logger):
+def train_world_model_step(replay_buffer: ReplayBuffer, world_model: WorldModelBase, batch_size, demonstration_batch_size, batch_length, logger):
     obs, action, reward, termination = replay_buffer.sample(batch_size, demonstration_batch_size, batch_length)
     world_model.update(obs, action, reward, termination, logger=logger)
 
 @torch.no_grad()
 def world_model_imagine_data(replay_buffer: ReplayBuffer,
-                             world_model: WorldModel, agent: agents.ActorCriticAgent,
+                             world_model: WorldModelBase, agent: agents.ActorCriticAgent,
                              imagine_batch_size, imagine_demonstration_batch_size,
                              imagine_context_length, imagine_batch_length,
                              log_video, logger):
@@ -73,7 +68,7 @@ def world_model_imagine_data(replay_buffer: ReplayBuffer,
 
 def joint_train_world_model_agent(params, 
                                   replay_buffer: ReplayBuffer,
-                                  world_model: WorldModel, 
+                                  world_model: WorldModelBase, 
                                   agent: agents.ActorCriticAgent,
                                   max_steps, num_envs, image_size,
                                   train_dynamics_every_steps, train_agent_every_steps,
@@ -112,7 +107,7 @@ def joint_train_world_model_agent(params,
                 if len(context_action) == 0:
                     action = vec_env.action_space.sample()
                 else:
-                    context_latent,_ = world_model.encode_obs(torch.cat(list(context_obs), dim=1))
+                    context_latent, _ = world_model.encode_obs(torch.cat(list(context_obs), dim=1))
                     model_context_action = np.stack(list(context_action), axis=0)
                     model_context_action = torch.Tensor(model_context_action.reshape(1, *model_context_action.shape)).cuda() #[np.newaxis, 0, 1]
                     prior_flattened_sample, last_dist_feat = world_model.calc_last_dist_feat(context_latent, model_context_action)
@@ -205,27 +200,50 @@ def joint_train_world_model_agent(params,
             torch.save(agent.state_dict(), f"ckpt/{args.log}/agent_{total_steps}.pth")
 
 def build_world_model(params, action_dims):
-    return WorldModel(
-        in_channels=params["Models"]["WorldModel"]["InChannels"],
-        in_width=params["BasicSettings"]["ImageSize"],
-        action_dims=action_dims,
-        transformer_max_length=params["Models"]["WorldModel"]["TransformerMaxLength"],
-        transformer_hidden_dim=params["Models"]["WorldModel"]["TransformerHiddenDim"],
-        transformer_num_layers=params["Models"]["WorldModel"]["TransformerNumLayers"],
-        transformer_num_heads=params["Models"]["WorldModel"]["TransformerNumHeads"],
-        # TODO JEPA setting add to config file
-        patch_size=16,
-        jepa_size='vit_small',
-        jepa_load_path=(
-            "/home/cgv/Documents/project/EmbodiedAgent/i-jepa/logs/mine/mine-tiny_vit-s16_ep100/jepa-latest.pth.tar",
-            "/home/cgv/Documents/project/EmbodiedAgent/i-jepa/logs/mine/mine-tiny_vit-s16_ep100/vae-normal-latest.pth.tar"
-        ),
-    ).cuda()
+    wm_type = params["Models"]["WorldModel"]["ModleName"] 
+    if wm_type == "JEPA_WM":
+        from world_models.jepa_world_models import JEPABaseWorldModel
+        wm = JEPABaseWorldModel(
+            # TODO JEPA setting add to config file
+            patch_size=params["Models"]["WorldModel"]["JEPAParams"]["PatchSize"],
+            jepa_size=params["Models"]["WorldModel"]["JEPAParams"]["ModelSize"],
+            jepa_load_path=params["Models"]["WorldModel"]["JEPAParams"]["ModelPath"],
+            in_width=params["BasicSettings"]["ImageSize"],
+            vae_type=params["Models"]["WorldModel"]["VAEParams"]["Type"], 
+            stoch_dim=params["Models"]["WorldModel"]["VAEParams"]["StochasticDim"], 
+            final_feature_width=params["Models"]["WorldModel"]["VAEParams"]["EncodeFinalFeatureWidth"], 
+            stem_channels=params["Models"]["WorldModel"]["VAEParams"]["EncodeStemChannels"], 
+            stem_repeat=params["Models"]["WorldModel"]["VAEParams"]["EncodeStemRepeatNum"], 
+            action_dims=action_dims,
+            transformer_max_length=params["Models"]["WorldModel"]["TransformerParams"]["MaxLength"],
+            transformer_hidden_dim=params["Models"]["WorldModel"]["TransformerParams"]["HiddenDim"],
+            transformer_num_layers=params["Models"]["WorldModel"]["TransformerParams"]["NumLayers"],
+            transformer_num_heads=params["Models"]["WorldModel"]["TransformerParams"]["NumHeads"],
+            use_amp=params["Models"]["use_amp"]
+        )
+    elif wm_type == "STORM":
+        from world_models.storm_world_models import STORMWorldModel 
+        wm = STORMWorldModel(
+            action_dims=action_dims,
+            in_channels=params["Models"]["WorldModel"]["InChannels"],
+            in_width=params["BasicSettings"]["ImageSize"],
+            vae_type=params["Models"]["WorldModel"]["VAEParams"]["Type"], 
+            stoch_dim=params["Models"]["WorldModel"]["VAEParams"]["StochasticDim"], 
+            final_feature_width=params["Models"]["WorldModel"]["VAEParams"]["EncodeFinalFeatureWidth"], 
+            stem_channels=params["Models"]["WorldModel"]["VAEParams"]["EncodeStemChannels"], 
+            stem_repeat=params["Models"]["WorldModel"]["VAEParams"]["EncodeStemRepeatNum"], 
+            transformer_max_length=params["Models"]["WorldModel"]["TransformerParams"]["MaxLength"],
+            transformer_hidden_dim=params["Models"]["WorldModel"]["TransformerParams"]["HiddenDim"],
+            transformer_num_layers=params["Models"]["WorldModel"]["TransformerParams"]["NumLayers"],
+            transformer_num_heads=params["Models"]["WorldModel"]["TransformerParams"]["NumHeads"],
+            use_amp=params["Models"]["use_amp"]
+        )
+    return wm.cuda()
 
 def build_agent(params, action_dim):
     return agents.ActorCriticAgent(
         # TODO Need follow VAE setting(Categorical / Continuous)
-        feat_dim=32 * 32 + params["Models"]["WorldModel"]["TransformerHiddenDim"],
+        feat_dim= sum(params["Models"]["Agent"]["InputFeature"]),
         num_layers=params["Models"]["Agent"]["NumLayers"],
         hidden_dim=params["Models"]["Agent"]["HiddenDim"],
         action_dim=action_dim,

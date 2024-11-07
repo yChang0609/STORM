@@ -17,10 +17,10 @@ import shutil
 import pickle
 import os
 
-from utils import seed_np_torch, Logger, load_config
-from replay_buffer import ReplayBuffer
-import env_wrapper
-import agents
+from utils.utils import seed_np_torch, Logger, load_config
+from utils.replay_buffer import ReplayBuffer
+import archive.env_wrapper as env_wrapper
+import agents.agents as agents
 from sub_models.functions_losses import symexp
 # from sub_models.world_models import WorldModel, MSELoss
 from sub_models.jepa_world_models import JEPABaseWorldModel as WorldModel

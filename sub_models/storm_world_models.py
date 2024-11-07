@@ -7,90 +7,123 @@ from einops.layers.torch import Rearrange
 from torch.cuda.amp import autocast
 
 from sub_models.functions_losses import SymLogTwoHotLoss
-from sub_models.attention_blocks import get_subsequent_mask_with_batch_length, get_subsequent_mask
+from sub_models.modules.Transformer.attention_blocks import get_subsequent_mask_with_batch_length, get_subsequent_mask
 from sub_models.transformer_model import StochasticTransformerKVCache
-import agents
+import agents.agents as agents
 
 from sub_models.utils.function import actions2onehot
 
-# JEPA
-from torchvision import transforms
-import sub_models.model.VAE.categorical_vae as cate_vae
-import sub_models.model.vision_transformer as vit
-from sub_models.model.jepa_decoder import init_jepa_decoder,load_jepa_decoder
-from sub_models.utils.tensors import trunc_normal_
-from sub_models.utils.schedulers import (
-    WarmupCosineSchedule,
-    CosineWDSchedule
-    )
-from math import sqrt
+class EncoderBN(nn.Module):
+    def __init__(self, in_channels, in_width, stem_channels, final_feature_width) -> None:
+        super().__init__()
 
-def tensor_unormalize(tensor):
-    mean = [0.485, 0.456, 0.406]
-    std = [0.229, 0.224, 0.225]
-    return tensor * torch.tensor(std).view(3, 1, 1).cuda() + torch.tensor(mean).view(3, 1, 1).cuda()
-# -- JEPA model
-def init_jepa_model(
-        patch_size=16,
-        model_name='vit_base',
-        crop_size=224,
-        conv_channels = [],
-        conv_strides = []
-    )->vit.VisionTransformer:
-    encoder = vit.__dict__[model_name](
-        img_size=[crop_size],
-        patch_size=patch_size,
-        conv_channels = conv_channels,
-        conv_strides = conv_strides)
-    
-    def init_weights(m):
-        if isinstance(m, torch.nn.Linear):
-            trunc_normal_(m.weight, std=0.02)
-            if m.bias is not None:
-                torch.nn.init.constant_(m.bias, 0)
-        elif isinstance(m, torch.nn.LayerNorm):
-            torch.nn.init.constant_(m.bias, 0)
-            torch.nn.init.constant_(m.weight, 1.0)
-    for m in encoder.modules():
-        init_weights(m)
+        backbone = []
+        # stem
+        backbone.append(
+            nn.Conv2d(
+                in_channels=in_channels,
+                out_channels=stem_channels,
+                kernel_size=4,
+                stride=2,
+                padding=1,
+                bias=False
+            )
+        )
+        feature_width = in_width//2
+        channels = stem_channels
+        backbone.append(nn.BatchNorm2d(stem_channels))
+        backbone.append(nn.ReLU(inplace=True))
 
-    return encoder
+        # layers
+        while True:
+            backbone.append(
+                nn.Conv2d(
+                    in_channels=channels,
+                    out_channels=channels*2,
+                    kernel_size=4,
+                    stride=2,
+                    padding=1,
+                    bias=False
+                )
+            )
+            channels *= 2
+            feature_width //= 2
+            backbone.append(nn.BatchNorm2d(channels))
+            backbone.append(nn.ReLU(inplace=True))
 
-def load_encoder(
-        r_path,
-        encoder:vit.VisionTransformer,
-        frozen=True
-    )->vit.VisionTransformer:
-    try:
-        checkpoint = torch.load(r_path, map_location=torch.device('cpu'))
-        epoch = checkpoint['epoch']
-        
-        # -- loading encoder
-        pretrained_dict = checkpoint['target_encoder']
-        for k, v in pretrained_dict.items():
-            encoder.state_dict()[k[len("module."):]].copy_(v)
+            if feature_width == final_feature_width:
+                break
 
-        if frozen:
-            for param in encoder.parameters():
-                param.requires_grad = False
+        self.backbone = nn.Sequential(*backbone)
+        self.last_channels = channels
 
-        print(f'loaded pretrained encoder from epoch {epoch}')
-        print(f'jepa model from read-path: {r_path}')
-        del checkpoint
+    def forward(self, x):
+        batch_size = x.shape[0]
+        x = rearrange(x, "B L C H W -> (B L) C H W")
+        x = self.backbone(x)
+        x = rearrange(x, "(B L) C H W -> B L (C H W)", B=batch_size)
+        return x
 
-    except Exception as e:
-        print(f'Encountered exception when loading checkpoint:{e}')
-        epoch = 0
 
-    return encoder
+class DecoderBN(nn.Module):
+    def __init__(self, stoch_dim, last_channels, original_in_channels, stem_channels, final_feature_width) -> None:
+        super().__init__()
+
+        backbone = []
+        # stem
+        backbone.append(nn.Linear(stoch_dim, last_channels*final_feature_width*final_feature_width, bias=False))
+        backbone.append(Rearrange('B L (C H W) -> (B L) C H W', C=last_channels, H=final_feature_width))
+        backbone.append(nn.BatchNorm2d(last_channels))
+        backbone.append(nn.ReLU(inplace=True))
+        # residual_layer
+        # backbone.append(ResidualStack(last_channels, 1, last_channels//4))
+        # layers
+        channels = last_channels
+        feat_width = final_feature_width
+        while True:
+            if channels == stem_channels:
+                break
+            backbone.append(
+                nn.ConvTranspose2d(
+                    in_channels=channels,
+                    out_channels=channels//2,
+                    kernel_size=4,
+                    stride=2,
+                    padding=1,
+                    bias=False
+                )
+            )
+            channels //= 2
+            feat_width *= 2
+            backbone.append(nn.BatchNorm2d(channels))
+            backbone.append(nn.ReLU(inplace=True))
+
+        backbone.append(
+            nn.ConvTranspose2d(
+                in_channels=channels,
+                out_channels=original_in_channels,
+                kernel_size=4,
+                stride=2,
+                padding=1
+            )
+        )
+        self.backbone = nn.Sequential(*backbone)
+
+    def forward(self, sample):
+        batch_size = sample.shape[0]
+        obs_hat = self.backbone(sample)
+        obs_hat = rearrange(obs_hat, "(B L) C H W -> B L C H W", B=batch_size)
+        return obs_hat
+
 
 class DistHead(nn.Module):
     '''
     Dist: abbreviation of distribution
     '''
-    def __init__(self, transformer_hidden_dim, stoch_dim) -> None:
+    def __init__(self, image_feat_dim, transformer_hidden_dim, stoch_dim) -> None:
         super().__init__()
         self.stoch_dim = stoch_dim
+        self.post_head = nn.Linear(image_feat_dim, stoch_dim*stoch_dim)
         self.prior_head = nn.Linear(transformer_hidden_dim, stoch_dim*stoch_dim)
 
     def unimix(self, logits, mixing_ratio=0.01):
@@ -100,11 +133,18 @@ class DistHead(nn.Module):
         logits = torch.log(mixed_probs)
         return logits
 
+    def forward_post(self, x):
+        logits = self.post_head(x)
+        logits = rearrange(logits, "B L (K C) -> B L K C", K=self.stoch_dim)
+        logits = self.unimix(logits)
+        return logits
+
     def forward_prior(self, x):
         logits = self.prior_head(x)
         logits = rearrange(logits, "B L (K C) -> B L K C", K=self.stoch_dim)
         logits = self.unimix(logits)
         return logits
+
 
 class RewardDecoder(nn.Module):
     def __init__(self, num_classes, embedding_size, transformer_hidden_dim) -> None:
@@ -123,6 +163,7 @@ class RewardDecoder(nn.Module):
         feat = self.backbone(feat)
         reward = self.head(feat)
         return reward
+
 
 class TerminationDecoder(nn.Module):
     def __init__(self,  embedding_size, transformer_hidden_dim) -> None:
@@ -146,14 +187,16 @@ class TerminationDecoder(nn.Module):
         termination = termination.squeeze(-1)  # remove last 1 dim
         return termination
 
+
 class MSELoss(nn.Module):
     def __init__(self) -> None:
         super().__init__()
 
     def forward(self, obs_hat, obs):
         loss = (obs_hat - obs)**2
-        loss = reduce(loss, "B L P C  -> B L", "sum")
+        loss = reduce(loss, "B L C H W -> B L", "sum")
         return loss.mean()
+
 
 class CategoricalKLDivLossWithFreeBits(nn.Module):
     def __init__(self, free_bits) -> None:
@@ -170,56 +213,27 @@ class CategoricalKLDivLossWithFreeBits(nn.Module):
         kl_div = torch.max(torch.ones_like(kl_div)*self.free_bits, kl_div)
         return kl_div, real_kl_div
 
-class JEPABaseWorldModel(nn.Module):
-    def __init__(self, 
-                 in_channels, in_width, action_dims,
-                 patch_size, jepa_size, jepa_load_path:tuple,
-                 transformer_max_length, transformer_hidden_dim, transformer_num_layers, transformer_num_heads,
-                 use_amp=True):
-        super().__init__()
-        jepa_encoder = init_jepa_model(
-            patch_size=patch_size,
-            model_name=jepa_size,
-            crop_size=in_width,
-        )
-        jepa_encoder = load_encoder(
-            r_path=jepa_load_path[0],
-            encoder=jepa_encoder,
-            frozen=True
-        )
-        self.jepa_encoder = nn.Sequential(
-            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
-            jepa_encoder,
-            # Rearrange('B P C -> B C P'),
-            # nn.BatchNorm1d(jepa_encoder.embed_dim),
-            # Rearrange('B C P -> B P C'),
-            )
 
-        jepa_decoder = init_jepa_decoder(
-            emb_channel=jepa_encoder.embed_dim,
-            in_width=sqrt(jepa_encoder.patch_embed.num_patches),
-            recon_image_width=in_width
-        )
-        jepa_decoder = load_jepa_decoder(
-            r_path=jepa_load_path[1],
-            decoder=jepa_decoder
-        )
-        self.jepa_decoder = jepa_decoder
+class WorldModel(nn.Module):
+    def __init__(self, in_channels, action_dims,
+                 transformer_max_length, transformer_hidden_dim, transformer_num_layers, transformer_num_heads):
+        super().__init__()
+        self.transformer_hidden_dim = transformer_hidden_dim
+        self.final_feature_width = 7
         self.stoch_dim = 32
         self.stoch_flattened_dim = self.stoch_dim*self.stoch_dim
-        self.use_amp = use_amp
-        vae = cate_vae.CategoricalVAE(stoch_dim=self.stoch_dim, 
-                    in_channels=jepa_encoder.embed_dim, 
-                    in_feature_width=sqrt(jepa_encoder.patch_embed.num_patches),
-                    use_amp=use_amp)
-        self.vae = vae
-
-        self.transformer_hidden_dim = transformer_hidden_dim
+        self.use_amp = True
         self.tensor_dtype = torch.bfloat16 if self.use_amp else torch.float32
         self.imagine_batch_size = -1
         self.imagine_batch_length = -1
         self.action_dims = action_dims
 
+        self.encoder = EncoderBN(
+            in_channels=in_channels,
+            in_width=224,
+            stem_channels=32,
+            final_feature_width=self.final_feature_width
+        )
         self.storm_transformer = StochasticTransformerKVCache(
             stoch_dim=self.stoch_flattened_dim,
             action_dim=sum(action_dims),
@@ -230,8 +244,16 @@ class JEPABaseWorldModel(nn.Module):
             dropout=0.1
         )
         self.dist_head = DistHead(
+            image_feat_dim=self.encoder.last_channels*self.final_feature_width*self.final_feature_width,
             transformer_hidden_dim=transformer_hidden_dim,
             stoch_dim=self.stoch_dim
+        )
+        self.image_decoder = DecoderBN(
+            stoch_dim=self.stoch_flattened_dim,
+            last_channels=self.encoder.last_channels,
+            original_in_channels=in_channels,
+            stem_channels=32,
+            final_feature_width=self.final_feature_width
         )
         self.reward_decoder = RewardDecoder(
             num_classes=255,
@@ -243,30 +265,7 @@ class JEPABaseWorldModel(nn.Module):
             transformer_hidden_dim=transformer_hidden_dim
         )
 
-
-        # Print Model 
-        # print("JEPA model:")
-        # print(self.jepa_encoder)
-        # print(self.jepa_decoder)
-
-        # print("VAE:")        
-        # print(self.vae)
-
-        # print("STORM Transformer:")
-        # print(self.storm_transformer)
-
-        # print("Distribution Head:")
-        # print(self.dist_head)
-
-        # print("Reward Decoder:")
-        # print(self.reward_decoder)
-
-        # print("Termination Decoder:")
-        # print(self.termination_decoder)
-
-        
         self.mse_loss_func = MSELoss()
-        # self.mse_loss_func = nn.MSELoss()
         self.ce_loss = nn.CrossEntropyLoss()
         self.bce_with_logits_loss_func = nn.BCEWithLogitsLoss()
         self.symlog_twohot_loss_func = SymLogTwoHotLoss(num_classes=255, lower_bound=-20, upper_bound=20)
@@ -276,15 +275,11 @@ class JEPABaseWorldModel(nn.Module):
 
     def encode_obs(self, obs):
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=self.use_amp):
-            batch_size=obs.shape[0]
-            obs = rearrange(obs, "B L C H W  -> (B L) C H W")
-            embedding = self.jepa_encoder(obs)
-            post_logits = self.vae.encode(embedding)
-            sample = self.vae.sample(post_logits)
-            # flattened_sample = self.flatten_sample(sample)
-            embedding = rearrange(embedding, "(B L) P C  -> B L P C",B=batch_size)
-            flattened_sample = rearrange(sample, "(B L) K C  -> B L (K C)",B=batch_size, K=self.stoch_dim, C=self.stoch_dim)
-        return flattened_sample, embedding
+            embedding = self.encoder(obs)
+            post_logits = self.dist_head.forward_post(embedding)
+            sample = self.stright_throught_gradient(post_logits, sample_mode="random_sample")
+            flattened_sample = self.flatten_sample(sample)
+        return flattened_sample
 
     def calc_last_dist_feat(self, latent, actions):
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=self.use_amp):
@@ -305,8 +300,7 @@ class JEPABaseWorldModel(nn.Module):
             prior_sample = self.stright_throught_gradient(prior_logits, sample_mode="random_sample")
             prior_flattened_sample = self.flatten_sample(prior_sample)
             if log_video:
-                emb_hat = self.vae.decode(prior_flattened_sample)
-                obs_hat = self.jepa_decoder(emb_hat)
+                obs_hat = self.image_decoder(prior_flattened_sample)
             else:
                 obs_hat = None
             reward_hat = self.reward_decoder(dist_feat)
@@ -356,7 +350,7 @@ class JEPABaseWorldModel(nn.Module):
 
         self.storm_transformer.reset_kv_cache_list(imagine_batch_size, dtype=self.tensor_dtype)
         # context
-        context_latent, embedding = self.encode_obs(sample_obs)
+        context_latent = self.encode_obs(sample_obs)
         for i in range(sample_obs.shape[1]):  # context_length is sample_obs.shape[1]
             last_obs_hat, last_reward_hat, last_termination_hat, last_latent, last_dist_feat = self.predict_next(
                 context_latent[:, i:i+1],
@@ -373,7 +367,7 @@ class JEPABaseWorldModel(nn.Module):
 
             last_obs_hat, last_reward_hat, last_termination_hat, last_latent, last_dist_feat = self.predict_next(
                 self.latent_buffer[:, i:i+1], self.action_buffer[:, i:i+1], log_video=log_video)
-            
+
             self.latent_buffer[:, i+1:i+2] = last_latent
             self.hidden_buffer[:, i+1:i+2] = last_dist_feat
             self.reward_hat_buffer[:, i:i+1] = last_reward_hat
@@ -382,9 +376,8 @@ class JEPABaseWorldModel(nn.Module):
                 obs_hat_list.append(last_obs_hat[::imagine_batch_size//16])  # uniform sample vec_env
 
         if log_video:
-            logger.log("Imagine/sample_video", torch.clamp(sample_obs[::imagine_batch_size//16], 0, 1).cpu().float().detach().numpy())
-            logger.log("Imagine/jepa_rec_video", torch.clamp(tensor_unormalize(self.jepa_decoder.decode_video(embedding[::imagine_batch_size//16])), 0, 1).cpu().float().detach().numpy())
-            logger.log("Imagine/predict_video", torch.clamp(tensor_unormalize(torch.cat(obs_hat_list, dim=1)), 0, 1).cpu().float().detach().numpy())
+            logger.log("Imagine/sample_video", sample_obs[::imagine_batch_size//16].cpu().float().detach().numpy())
+            logger.log("Imagine/predict_video", torch.clamp(torch.cat(obs_hat_list, dim=1), 0, 1).cpu().float().detach().numpy())
 
         return torch.cat([self.latent_buffer, self.hidden_buffer], dim=-1), self.action_buffer, self.reward_hat_buffer, self.termination_hat_buffer
 
@@ -394,17 +387,13 @@ class JEPABaseWorldModel(nn.Module):
 
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=self.use_amp):
             # encoding
-            batch_size=obs.shape[0]
-            
-            obs = rearrange(obs, "B L C H W  -> (B L) C H W")
-            embedding = self.jepa_encoder(obs)
-            post_logits = self.vae.encode(embedding)
-            sample = self.vae.sample(post_logits)
-            post_logits = rearrange(post_logits[0], "(B L) K C -> B L K C", B=batch_size, K=self.stoch_dim, C=self.stoch_dim)
-            flattened_sample = rearrange(sample, "(B L) K C  -> B L (K C)",B=batch_size, K=self.stoch_dim, C=self.stoch_dim)
+            embedding = self.encoder(obs)
+            post_logits = self.dist_head.forward_post(embedding)
+            sample = self.stright_throught_gradient(post_logits, sample_mode="random_sample")
+            flattened_sample = self.flatten_sample(sample)
 
             # decoding image
-            embedding_hat = self.vae.decode(sample)
+            obs_hat = self.image_decoder(flattened_sample)
 
             # transformer
             temporal_mask = get_subsequent_mask_with_batch_length(batch_length, flattened_sample.device)
@@ -415,10 +404,7 @@ class JEPABaseWorldModel(nn.Module):
             termination_hat = self.termination_decoder(dist_feat)
 
             # env loss
-            
-            embedding_hat = rearrange(embedding_hat, "(B L) P C  -> B L P C ",B=batch_size)
-            embedding = rearrange(embedding, "(B L) P C   -> B L P C ",B=batch_size)
-            reconstruction_loss = self.mse_loss_func(embedding_hat, embedding)
+            reconstruction_loss = self.mse_loss_func(obs_hat, obs)
             reward_loss = self.symlog_twohot_loss_func(reward_hat, reward)
             termination_loss = self.bce_with_logits_loss_func(termination_hat, termination)
             # dyn-rep loss

@@ -3,11 +3,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
 from einops.layers.torch import Rearrange
-from src.models.VAE.base import *
-import src.models.VAE.encoder_decoder as model
+
+from world_models.modules.VAE.vae_base import *
+import world_models.modules.VAE.encoder_decoder as model
 from math import sqrt
 
-class AutoEncoderHead(nn.Module):
+class GaussianDistHead(nn.Module):
     def __init__(self, input_dim, z_dim, hidden_dim=0):
         super().__init__()
         in_dim = input_dim
@@ -15,23 +16,26 @@ class AutoEncoderHead(nn.Module):
         if not hidden_dim == 0:
             self.hidden_mlp = nn.Linear(input_dim, hidden_dim)
             in_dim = hidden_dim
-        self.lanten_mlp = nn.Linear(in_dim, z_dim)
+        self.mu_mlp = nn.Linear(in_dim, z_dim)
+        self.logvar_mlp = nn.Linear(in_dim, z_dim)
 
     def forward(self, x):
         if  not self.hidden_dim == 0:
             x = self.hidden_mlp(x)
-        return self.lanten_mlp(x)
+        return self.mu_mlp(x), self.logvar_mlp(x)
 
-class AutoEncoder(BaseVAE):
-    def __init__(self, z_dim:int, in_channels:int, in_feature_width:int, use_amp:bool):
+class ContinuousVAE(BaseVAE):
+    def __init__(self, 
+                 z_dim:int, 
+                 in_channels:int, in_feature_width:int, 
+                 stem_channels:int, stem_repeat:int,
+                 final_feature_width:int, use_amp, pixel_suffle_channels=None):
         super().__init__()
-        final_feature_width = 2
         self.use_amp = use_amp
         self.in_channels=int(in_channels)
         self.in_feature_width=int(in_feature_width)
 
-        stem_channels=32
-        encoder_in_channels = 3
+        encoder_in_channels = in_channels if pixel_suffle_channels==None else pixel_suffle_channels
         r = int(sqrt(in_channels//encoder_in_channels))
         
         self.pixel_shuffle = nn.PixelShuffle(r)
@@ -41,10 +45,10 @@ class AutoEncoder(BaseVAE):
             in_feature_width=in_feature_width*r, 
             final_feature_width=final_feature_width,
             stem_channels=stem_channels,
-            num_repeat=2
-            )
+            num_repeat=stem_repeat
+        )
 
-        self.ae_head = AutoEncoderHead(
+        self.dist_head = GaussianDistHead(
             input_dim=self.encoder.last_channels*self.encoder.final_feature_width*self.encoder.final_feature_width,
             z_dim=z_dim
         )
@@ -59,14 +63,20 @@ class AutoEncoder(BaseVAE):
             num_repeat=self.encoder.num_repeat
         )
 
+
+    def reparameterize(self, mu: Tensor, logvar: Tensor) -> Tensor:
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return eps * std + mu
+    
     # -- VAE interface
     def encode(self, input: Tensor) -> List[Tensor]:
         x = rearrange(input, "B (H W) C -> B C H W", C=self.in_channels, H=self.in_feature_width)
         x = self.pixel_shuffle(x)
         x = self.encoder(x)
         x = rearrange(x, "B C H W  -> B (C H W)", C=self.encoder.last_channels, H=self.encoder.final_feature_width)
-        z= self.ae_head(x)
-        return [z]
+        z_mu, z_logvar = self.dist_head(x)
+        return [z_mu, z_logvar]
     
     def decode(self, z: Tensor) -> Tensor:
         x = self.decoder(z)
@@ -75,10 +85,11 @@ class AutoEncoder(BaseVAE):
         return x
     
     def sample(self, params:List[Tensor], **kwargs) -> Tensor:
-        return params[0]
+        return self.reparameterize(params[0],params[1])
     
     def forward(self, input: Tensor, **kwargs) -> List[Tensor]:
-        z = self.encode(input)[0]
-        return  [self.decode(z), input, z]
+        mu, log_var = self.encode(input)
+        z = self.reparameterize(mu, log_var)
+        return  [self.decode(z), input, mu, log_var]
 
     

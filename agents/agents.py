@@ -1,16 +1,11 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import torch.distributions as distributions
-from einops import rearrange, repeat
-from einops.layers.torch import Rearrange
 import copy
-from torch.cuda.amp import autocast
 
-from sub_models.functions_losses import SymLogTwoHotLoss
-from utils import EMAScalar
+from world_models.utils.functions_losses import SymLogTwoHotLoss
+from utils.utils import EMAScalar
 
-from sub_models.multidiscrete_actor import MultiCategoricalActor
+from .multidiscrete_actor import MultiCategoricalActor
 
 def percentile(x, percentage):
     flat_x = torch.flatten(x)

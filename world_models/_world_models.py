@@ -1,17 +1,83 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.distributions import OneHotCategorical, Normal
-from einops import rearrange, repeat, reduce
+from torch.distributions import OneHotCategorical
+from einops import rearrange, reduce
 from einops.layers.torch import Rearrange
-from torch.cuda.amp import autocast
 
-from sub_models.functions_losses import SymLogTwoHotLoss
-from sub_models.attention_blocks import get_subsequent_mask_with_batch_length, get_subsequent_mask
-from sub_models.transformer_model import StochasticTransformerKVCache
-import agents
+# World model basic class
+from world_model_base import WorldModelBase
 
-from sub_models.utils.function import actions2onehot
+# VAE
+from modules.VAE.vae_base import BaseVAE
+
+# Dynamic model transformer
+from modules.Transformer.attention_blocks import get_subsequent_mask_with_batch_length, get_subsequent_mask
+from modules.Transformer.transformer_model import StochasticTransformerKVCache
+
+# Funciton
+from world_models.utils.action2onehot import actions2onehot
+from world_models.utils.functions_losses import SymLogTwoHotLoss
+from world_models.utils.logging import error_msg
+
+'''
+Import Agent for interaction with the world model, which processes and responds to image data
+'''
+from agents.agents import ActorCriticAgent
+
+class STORMWorldModel(WorldModelBase):
+    def __init__(self, 
+                 in_channels, in_width,
+                 vae_type, stoch_dim,
+                 action_dims,
+                 transformer_max_length, transformer_hidden_dim, transformer_num_layers, transformer_num_heads):
+        super().__init__()
+        self.stoch_dim = stoch_dim
+
+
+        # Build VAE
+        if vae_type == "categorical":
+            from modules.VAE.categorical_vae import CategoricalVAE as vae
+            from modules.VAE.categorical_vae import CategoricalDistHead as DistHead
+        elif vae_type == "continuous":
+            from modules.VAE.continuous_vae import ContinuousVAE as vae
+            from modules.VAE.continuous_vae import GaussianDistHead as DistHead
+        else:
+            assert error_msg(f"This VAE type not implement{vae_type}")
+
+        self._vae = vae(
+            z_dim=stoch_dim,
+            in_channels=in_channels, 
+            in_feature_width=in_width,
+        )
+
+        #Transformer
+        self._post_dist_head = DistHead(            
+            input_dim=transformer_hidden_dim,
+            stoch_dim=stoch_dim
+        )
+
+   
+    
+    def encode_obs(self, obs):
+        raise NotImplementedError("Subclasses must implement the method.")
+    
+    def calc_last_dist_feat(self, latent, actions):
+        raise NotImplementedError("Subclasses must implement the method.")
+    
+    def predict_next(self, last_flattened_sample, actions, log_video=True):
+        raise NotImplementedError("Subclasses must implement the method.")
+
+    def imagine_data(self, 
+                     agent: ActorCriticAgent, 
+                     sample_obs, sample_action,
+                     imagine_batch_size, imagine_batch_length, 
+                     log_video, logger):
+        raise NotImplementedError("Subclasses must implement the method.")
+        
+    def update(self, obs, actions, reward, termination, logger=None):
+        raise NotImplementedError("Subclasses must implement the method.")
+
 
 class EncoderBN(nn.Module):
     def __init__(self, in_channels, in_width, stem_channels, final_feature_width) -> None:
@@ -343,7 +409,7 @@ class WorldModel(nn.Module):
             self.reward_hat_buffer = torch.zeros(scalar_size, dtype=dtype, device="cuda")
             self.termination_hat_buffer = torch.zeros(scalar_size, dtype=dtype, device="cuda")
 
-    def imagine_data(self, agent: agents.ActorCriticAgent, sample_obs, sample_action,
+    def imagine_data(self, agent: ActorCriticAgent, sample_obs, sample_action,
                      imagine_batch_size, imagine_batch_length, log_video, logger):
         self.init_imagine_buffer(imagine_batch_size, imagine_batch_length, dtype=self.tensor_dtype)
         obs_hat_list = []
@@ -429,3 +495,5 @@ class WorldModel(nn.Module):
             logger.log("WorldModel/representation_loss", representation_loss.item())
             logger.log("WorldModel/representation_real_kl_div", representation_real_kl_div.item())
             logger.log("WorldModel/total_loss", total_loss.item())
+
+

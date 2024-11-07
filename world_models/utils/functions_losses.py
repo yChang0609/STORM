@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.distributions import OneHotCategorical
+from einops import rearrange, reduce
+from einops.layers.torch import Rearrange
 
 
 @torch.no_grad()
@@ -53,6 +56,31 @@ class SymLogTwoHotLoss(nn.Module):
 
     def decode(self, output):
         return symexp(F.softmax(output, dim=-1) @ self.bins)
+    
+class MSELoss(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+
+    def forward(self, obs_hat, obs):
+        loss = (obs_hat - obs)**2
+        loss = reduce(loss, "B L C H W -> B L", "sum")
+        return loss.mean()
+
+
+class CategoricalKLDivLossWithFreeBits(nn.Module):
+    def __init__(self, free_bits) -> None:
+        super().__init__()
+        self.free_bits = free_bits
+
+    def forward(self, p_logits, q_logits):
+        p_dist = OneHotCategorical(logits=p_logits)
+        q_dist = OneHotCategorical(logits=q_logits)
+        kl_div = torch.distributions.kl.kl_divergence(p_dist, q_dist)
+        kl_div = reduce(kl_div, "B L D -> B L", "sum")
+        kl_div = kl_div.mean()
+        real_kl_div = kl_div
+        kl_div = torch.max(torch.ones_like(kl_div)*self.free_bits, kl_div)
+        return kl_div, real_kl_div
 
 
 if __name__ == "__main__":

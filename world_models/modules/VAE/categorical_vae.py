@@ -4,18 +4,20 @@ import torch.nn.functional as F
 from torch.distributions import OneHotCategorical
 from einops import rearrange
 from einops.layers.torch import Rearrange
-from sub_models.model.VAE.base import *
-import sub_models.model.VAE.encoder_decoder as model
+
+
+from world_models.modules.VAE.vae_base import *
+import world_models.modules.VAE.encoder_decoder as model
 from math import sqrt
 
-class DistHead(nn.Module):
+class CategoricalDistHead(nn.Module):
     '''
     Dist: abbreviation of distribution
     '''
-    def __init__(self, image_feat_dim, stoch_dim) -> None:
+    def __init__(self, feat_dim, stoch_dim) -> None:
         super().__init__()
         self.stoch_dim = stoch_dim
-        self.post_head = nn.Linear(image_feat_dim, stoch_dim*stoch_dim)
+        self.post_head = nn.Linear(feat_dim, stoch_dim*stoch_dim)
 
     def unimix(self, logits, mixing_ratio=0.01):
         # uniform noise mixing
@@ -24,7 +26,7 @@ class DistHead(nn.Module):
         logits = torch.log(mixed_probs)
         return logits
 
-    def forward_post(self, x):
+    def forward(self, x):
         logits = self.post_head(x)
         logits = rearrange(logits, "B (K C) -> B K C", K=self.stoch_dim)
         logits = self.unimix(logits)
@@ -32,17 +34,19 @@ class DistHead(nn.Module):
    
 class CategoricalVAE(BaseVAE):
     '''Categorical Variational Auto Encoder'''
-    def __init__(self, stoch_dim, in_channels, in_feature_width, use_amp):
+    def __init__(self, 
+                 z_dim:int, 
+                 in_channels:int, in_feature_width:int, 
+                 stem_channels:int, stem_repeat:int,
+                 final_feature_width:int, use_amp, pixel_suffle_channels=None):
         super().__init__()
         self.use_amp = use_amp
-        final_feature_width = 2
         self.in_channels=int(in_channels)
         self.in_feature_width=int(in_feature_width)
-        self.stoch_dim = stoch_dim
+        self.stoch_dim = z_dim
         self.stoch_flattened_dim = self.stoch_dim*self.stoch_dim
 
-        stem_channels=256
-        encoder_in_channels = in_channels
+        encoder_in_channels = in_channels if pixel_suffle_channels==None else pixel_suffle_channels
         r = int(sqrt(in_channels//encoder_in_channels))
         
         self.pixel_shuffle = nn.PixelShuffle(r)
@@ -53,16 +57,16 @@ class CategoricalVAE(BaseVAE):
             in_feature_width=in_feature_width*r, 
             final_feature_width=final_feature_width,
             stem_channels=stem_channels,
-            num_repeat=0
+            num_repeat=stem_repeat
         )
 
-        self.dist_head = DistHead(
-            image_feat_dim=self.encoder.last_channels*self.encoder.final_feature_width*self.encoder.final_feature_width,
+        self.dist_head = CategoricalDistHead(
+            feat_dim=self.encoder.last_channels*self.encoder.final_feature_width*self.encoder.final_feature_width,
             stoch_dim=self.stoch_dim
         )
 
         self.decoder = model.Decoder(
-            in_dim=stoch_dim*stoch_dim, 
+            in_dim= self.stoch_flattened_dim, 
             last_channels=self.encoder.last_channels, 
             final_feature_width=self.encoder.final_feature_width, 
             recover_channels=encoder_in_channels,
@@ -87,11 +91,11 @@ class CategoricalVAE(BaseVAE):
     # -- VAE interface
     def encode(self, input: Tensor) -> List[Tensor]:
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=self.use_amp):
-            x = rearrange(input, "B (H W) C -> B C H W", C=self.in_channels, H=self.in_feature_width)
-            x = self.pixel_shuffle(x)
+            # x = rearrange(input, "B (H W) C -> B C H W", C=self.in_channels, H=self.in_feature_width)
+            x = self.pixel_shuffle(input)
             x = self.encoder(x)
             x = rearrange(x, "B C H W  -> B (C H W)", C=self.encoder.last_channels, H=self.encoder.final_feature_width)
-            post_logits = self.dist_head.forward_post(x)
+            post_logits = self.dist_head(x)
         return [post_logits]
     
     def decode(self, z: Tensor) -> Tensor:
@@ -99,13 +103,15 @@ class CategoricalVAE(BaseVAE):
             z = self.flatten_sample(z)
             x = self.decoder(z)
             x = self.pixel_unshuffle(x)
-            x = rearrange(x, "B C H W  -> B (H W) C", C=self.in_channels, H=self.in_feature_width)
+            # x = rearrange(x, "B C H W  -> B (H W) C", C=self.in_channels, H=self.in_feature_width)
         return x
     
     def sample(self, params:List[Tensor], **kwargs) -> Tensor:
-        return self.stright_throught_gradient(params[0], sample_mode="random_sample")
+        sample_mode = kwargs.get('sample_mode', "random_sample")
+        return self.stright_throught_gradient(params[0], sample_mode=sample_mode)
     
     def forward(self, input: Tensor, **kwargs) -> List[Tensor]:
-        post_logits = self.encode(input)[0]
-        z = self.stright_throught_gradient(post_logits, sample_mode="random_sample")
+        post_logits = self.encode(input)
+        sample_mode = kwargs.get('sample_mode', "random_sample")
+        z = self.sample(post_logits, sample_mode=sample_mode)
         return  [self.decode(z), input, post_logits]

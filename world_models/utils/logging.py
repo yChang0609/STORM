@@ -90,3 +90,7 @@ def grad_logger(named_params):
     if stats.first_layer is None or stats.last_layer is None:
         stats.first_layer = stats.last_layer = 0.
     return stats
+
+
+def error_msg(msg:str):
+    return f"[World model Erroe]:{msg}"
