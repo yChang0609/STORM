@@ -1,14 +1,11 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.distributions import OneHotCategorical
-from einops import rearrange, reduce
+from einops import rearrange
 
 # World model basic class
 from world_models.world_model_base import WorldModelBase
 
 # VAE
-from world_models.modules.VAE.vae_base import BaseVAE
 
 # Dynamic model transformer
 from world_models.modules.Transformer.attention_blocks import get_subsequent_mask_with_batch_length, get_subsequent_mask
@@ -42,7 +39,7 @@ class STORMWorldModel(WorldModelBase):
         self.tensor_dtype = torch.bfloat16 if self.use_amp else torch.float32
 
 
-        # Build VAE
+        # VAE
         if vae_type == "categorical":
             from world_models.modules.VAE.categorical_vae import CategoricalVAE as vae
             from world_models.modules.VAE.categorical_vae import CategoricalDistHead as DistHead

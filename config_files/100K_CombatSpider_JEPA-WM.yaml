@@ -37,7 +37,7 @@ JointTrainAgent:
   SaveEverySteps: 2500
 
 Models:
-  
+  use_amp: true
   WorldModel:
     #World model select
     ModleName: JEPA_WM # STORM / JEPA_WM
@@ -50,7 +50,7 @@ Models:
       PatchSize: 16
       ModelSize: vit_small
       ModelPath: 
-        - "/home/cgv/Documents/project/EmbodiedAgent/i-jepa/logs/mine/mine-tiny_vit-s16_ep100/jepa-latest.pth.tar",       # Encoder
+        - "/home/cgv/Documents/project/EmbodiedAgent/i-jepa/logs/mine/mine-tiny_vit-s16_ep100/jepa-latest.pth.tar"       # Encoder
         - "/home/cgv/Documents/project/EmbodiedAgent/i-jepa/logs/mine/mine-tiny_vit-s16_ep100/vae-normal-latest.pth.tar"  # Decoder
 
     #VAE
@@ -59,7 +59,7 @@ Models:
       StochasticDim: 32
       EncodeFinalFeatureWidth: 4
       EncodeStemChannels: 256
-      EncodeStemRepeatNum: 2
+      EncodeStemRepeatNum: 0
       # Decoding parameters will be repeated with encoding
 
     # dynamic model transformer

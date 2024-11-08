@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-import agents.agents as agents
+from agents.agents import ActorCriticAgent
 
 class WorldModelBase(nn.Module):
     def __init__(self):
@@ -46,7 +46,7 @@ class WorldModelBase(nn.Module):
         raise NotImplementedError("Subclasses must implement the method.")
 
     def imagine_data(self, 
-                     agent: agents.ActorCriticAgent, 
+                     agent: ActorCriticAgent, 
                      sample_obs, sample_action,
                      imagine_batch_size, imagine_batch_length, 
                      log_video, logger):
