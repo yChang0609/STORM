@@ -160,14 +160,14 @@ class JEPAWorldModel(WorldModelBase):
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=self.use_amp):
             with torch.no_grad():
                 emb = self.jepa_encoder(obs) # [Batch&Length Channels sqrt(patch) sqrt(patch)]
-                nb_emb = self.rec_jepa_encoder(obs) # Only using reconsturct image from jepa output [Batch&Length Channels sqrt(patch) sqrt(patch)]
+                rec_emb = self.rec_jepa_encoder(obs) # Only using reconsturct image from jepa output [Batch&Length Channels sqrt(patch) sqrt(patch)]
             post_logits = self._vae.encode(emb)
             sample = self._vae.sample(post_logits, sample_mode="random_sample")
             flattened_sample = self._vae.flatten_sample(sample)
         # emb = rearrange(emb, "(B L) C H W -> B L C H W",B=batch_size) # process output shape
-        nb_emb = rearrange(nb_emb, "(B L) C H W -> B L C H W",B=batch_size) # process output shape
+        rec_emb = rearrange(rec_emb, "(B L) C H W -> B L C H W",B=batch_size) # process output shape
         flattened_sample = rearrange(sample, "(B L) K C -> B L (K C)",B=batch_size) # process output shape
-        return flattened_sample, nb_emb
+        return flattened_sample, rec_emb
     
     # calculate last distribution feature
     def calc_last_dist_feat(self, latent, actions):
@@ -268,6 +268,8 @@ class JEPAWorldModel(WorldModelBase):
             # encoding
             with torch.no_grad():
                 emb = self.jepa_encoder(vae_obs) # [Batch&Length Channels sqrt(patch) sqrt(patch)]
+                rec_emb = self.rec_jepa_encoder(vae_obs)
+
             post_logits = self._vae.encode(emb)
             sample = self._vae.sample(post_logits, sample_mode="random_sample")
             flattened_sample = self._vae.flatten_sample(sample)
@@ -278,7 +280,8 @@ class JEPAWorldModel(WorldModelBase):
             # reshape [B * ]-> [B L *]
             post_logits = rearrange(post_logits[0], "(B L) K C -> B L K C",B=batch_size)
             flattened_sample = rearrange(sample, "(B L) K C -> B L (K C)",B=batch_size) # process output shape
-            emb = rearrange(emb, "(B L) C H W -> B L C H W",B=batch_size)
+            # emb = rearrange(emb, "(B L) C H W -> B L C H W",B=batch_size)
+            rec_emb = rearrange(rec_emb, "(B L) C H W -> B L C H W",B=batch_size)
             emb_hat = rearrange(emb_hat, "(B L) C H W -> B L C H W",B=batch_size)
 
             # transformer
@@ -295,7 +298,7 @@ class JEPAWorldModel(WorldModelBase):
             termination_hat = self.termination_decoder(dist_feat)
 
             # env loss
-            reconstruction_loss = self.mse_loss_func(emb_hat, emb)
+            reconstruction_loss = self.mse_loss_func(emb_hat, rec_emb)
             reward_loss = self.symlog_twohot_loss_func(reward_hat, reward)
             termination_loss = self.bce_with_logits_loss_func(termination_hat, termination)
             # dyn-rep loss
