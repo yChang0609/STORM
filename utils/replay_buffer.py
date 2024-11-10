@@ -129,3 +129,13 @@ class ReplayBuffer():
 
     def __len__(self):
         return self.length * self.num_envs
+    
+def build_replay_buffer(params, action_dims):
+    return ReplayBuffer(
+        obs_shape=(params["BasicSettings"]["ImageSize"], params["BasicSettings"]["ImageSize"], 3),
+        action_dim=action_dims,
+        num_envs=params["JointTrainAgent"]["NumEnvs"],
+        max_length=params["JointTrainAgent"]["BufferMaxLength"],
+        warmup_length=params["JointTrainAgent"]["BufferWarmUp"],
+        store_on_gpu=params["BasicSettings"]["ReplayBufferOnGPU"],
+    )

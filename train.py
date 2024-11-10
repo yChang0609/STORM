@@ -12,32 +12,24 @@ import yaml
 import pprint
 
 from utils.utils import seed_np_torch, Logger
-from libs.env_wrapper import MineDojoGymnasium
+
+from libs.env_wrapper import build_single_env
 
 from world_models.world_model_base import WorldModelBase
-import agents.agents as agents
-from utils.replay_buffer import ReplayBuffer
+from agents import agents
+from utils.build_model import build_agent, build_world_model
+from utils.replay_buffer import ReplayBuffer, build_replay_buffer
 
-# MineDojo
-from libs.mine_env import build_env
 
-def build_single_env(params, seed = None)->gymnasium.Wrapper:
-    env = build_env(params, seed)
-    env = MineDojoGymnasium(
-        minedojo_env=env,
-        skip=1,
-        seed=seed
-    )
-    return env
 
-def build_vec_env(env_name, image_size, num_envs, seed):
-    # lambda pitfall refs to: https://python.plainenglish.io/python-pitfalls-with-variable-capture-dcfc113f39b7
-    def lambda_generator(env_name, image_size):
-        return lambda: build_single_env(env_name, image_size, seed)
-    env_fns = []
-    env_fns = [lambda_generator(env_name, image_size) for i in range(num_envs)]
-    vec_env = gymnasium.vector.AsyncVectorEnv(env_fns=env_fns)
-    return vec_env
+# def build_vec_env(env_name, image_size, num_envs, seed):
+#     # lambda pitfall refs to: https://python.plainenglish.io/python-pitfalls-with-variable-capture-dcfc113f39b7
+#     def lambda_generator(env_name, image_size):
+#         return lambda: build_single_env(env_name, image_size, seed)
+#     env_fns = []
+#     env_fns = [lambda_generator(env_name, image_size) for i in range(num_envs)]
+#     vec_env = gymnasium.vector.AsyncVectorEnv(env_fns=env_fns)
+#     return vec_env
 
 def train_world_model_step(replay_buffer: ReplayBuffer, world_model: WorldModelBase, batch_size, demonstration_batch_size, batch_length, logger):
     obs, action, reward, termination = replay_buffer.sample(batch_size, demonstration_batch_size, batch_length)
@@ -199,81 +191,6 @@ def joint_train_world_model_agent(params,
             torch.save(world_model.state_dict(), f"ckpt/{args.log}/world_model_{total_steps}.pth")
             torch.save(agent.state_dict(), f"ckpt/{args.log}/agent_{total_steps}.pth")
 
-def build_world_model(params, action_dims):
-    wm_type = params["Models"]["WorldModel"]["ModleName"] 
-    if wm_type == "JEPA_WM":
-        from world_models.jepa_world_models import JEPAWorldModel
-        wm = JEPAWorldModel(
-            # Input setting
-            action_dims=action_dims,
-            in_channels=params["Models"]["WorldModel"]["InChannels"],
-            in_width=params["BasicSettings"]["ImageSize"],
-
-            # JEPA
-            patch_size=params["Models"]["WorldModel"]["JEPAParams"]["PatchSize"],
-            jepa_size=params["Models"]["WorldModel"]["JEPAParams"]["ModelSize"],
-            jepa_load_path=params["Models"]["WorldModel"]["JEPAParams"]["ModelPath"],
-            
-            # VAE
-            vae_type=params["Models"]["WorldModel"]["VAEParams"]["Type"], 
-            stoch_dim=params["Models"]["WorldModel"]["VAEParams"]["StochasticDim"], 
-            final_feature_width=params["Models"]["WorldModel"]["VAEParams"]["EncodeFinalFeatureWidth"], 
-            stem_channels=params["Models"]["WorldModel"]["VAEParams"]["EncodeStemChannels"], 
-            stem_repeat=params["Models"]["WorldModel"]["VAEParams"]["EncodeStemRepeatNum"], 
-            
-            # Transformer
-            transformer_max_length=params["Models"]["WorldModel"]["TransformerParams"]["MaxLength"],
-            transformer_hidden_dim=params["Models"]["WorldModel"]["TransformerParams"]["HiddenDim"],
-            transformer_num_layers=params["Models"]["WorldModel"]["TransformerParams"]["NumLayers"],
-            transformer_num_heads=params["Models"]["WorldModel"]["TransformerParams"]["NumHeads"],
-
-            use_amp=params["Models"]["use_amp"]
-        )
-
-    elif wm_type == "STORM":
-        from world_models.storm_world_models import STORMWorldModel 
-        wm = STORMWorldModel(
-            # Input setting
-            action_dims=action_dims,
-            in_channels=params["Models"]["WorldModel"]["InChannels"],
-            in_width=params["BasicSettings"]["ImageSize"],
-
-            # VAE
-            vae_type=params["Models"]["WorldModel"]["VAEParams"]["Type"], 
-            stoch_dim=params["Models"]["WorldModel"]["VAEParams"]["StochasticDim"], 
-            final_feature_width=params["Models"]["WorldModel"]["VAEParams"]["EncodeFinalFeatureWidth"], 
-            stem_channels=params["Models"]["WorldModel"]["VAEParams"]["EncodeStemChannels"], 
-            stem_repeat=params["Models"]["WorldModel"]["VAEParams"]["EncodeStemRepeatNum"], 
-            
-            # Transformer
-            transformer_max_length=params["Models"]["WorldModel"]["TransformerParams"]["MaxLength"],
-            transformer_hidden_dim=params["Models"]["WorldModel"]["TransformerParams"]["HiddenDim"],
-            transformer_num_layers=params["Models"]["WorldModel"]["TransformerParams"]["NumLayers"],
-            transformer_num_heads=params["Models"]["WorldModel"]["TransformerParams"]["NumHeads"],
-            use_amp=params["Models"]["use_amp"]
-        )
-    return wm.cuda()
-
-def build_agent(params, action_dim):
-    return agents.ActorCriticAgent(
-        feat_dim= sum(params["Models"]["Agent"]["InputFeature"]),
-        num_layers=params["Models"]["Agent"]["NumLayers"],
-        hidden_dim=params["Models"]["Agent"]["HiddenDim"],
-        action_dim=action_dim,
-        gamma=float(params["Models"]["Agent"]["Gamma"]),
-        lambd=float(params["Models"]["Agent"]["Lambda"]),
-        entropy_coef=float(params["Models"]["Agent"]["EntropyCoef"]),
-    ).cuda()
-
-def build_replay_buffer(params, action_dims):
-    return ReplayBuffer(
-        obs_shape=(params["BasicSettings"]["ImageSize"], params["BasicSettings"]["ImageSize"], 3),
-        action_dim=action_dims,
-        num_envs=params["JointTrainAgent"]["NumEnvs"],
-        max_length=params["JointTrainAgent"]["BufferMaxLength"],
-        warmup_length=params["JointTrainAgent"]["BufferWarmUp"],
-        store_on_gpu=params["BasicSettings"]["ReplayBufferOnGPU"],
-    )
 if __name__ == "__main__":
     # ignore warnings
     import warnings
