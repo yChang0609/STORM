@@ -31,8 +31,8 @@ Models:
     TransformerNumHeads: 8
 
   Agent:
-    NumLayers: 2
-    HiddenDim: 512
+    NumLayers: 3
+    HiddenDim: 1024
     Gamma: 0.985
     Lambda: 0.95
     EntropyCoef: 3E-4

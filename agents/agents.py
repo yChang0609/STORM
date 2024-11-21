@@ -43,14 +43,14 @@ class ActorCriticAgent(nn.Module):
 
         actor = [
             nn.Linear(feat_dim, hidden_dim, bias=False),
-            nn.LayerNorm(hidden_dim),
-            nn.ReLU()
+            nn.RMSNorm(hidden_dim),
+            nn.SiLU()
         ]
         for i in range(num_layers - 1):
             actor.extend([
                 nn.Linear(hidden_dim, hidden_dim, bias=False),
-                nn.LayerNorm(hidden_dim),
-                nn.ReLU()
+                nn.RMSNorm(hidden_dim),
+                nn.SiLU()
             ])
         # self.actor = nn.Sequential(
         #     *actor,
@@ -66,14 +66,14 @@ class ActorCriticAgent(nn.Module):
 
         critic = [
             nn.Linear(feat_dim, hidden_dim, bias=False),
-            nn.LayerNorm(hidden_dim),
-            nn.ReLU()
+            nn.RMSNorm(hidden_dim),
+            nn.SiLU()
         ]
         for i in range(num_layers - 1):
             critic.extend([
                 nn.Linear(hidden_dim, hidden_dim, bias=False),
-                nn.LayerNorm(hidden_dim),
-                nn.ReLU()
+                nn.RMSNorm(hidden_dim),
+                nn.SiLU()
             ])
 
         self.critic = nn.Sequential(

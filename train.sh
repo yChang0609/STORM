@@ -6,5 +6,6 @@
 #     -env_name "ALE/${env_name}-v5" \
 #     -trajectory_path "D_TRAJ/${env_name}.pkl" 
 
-env_name=CombatSpider
-MINEDOJO_HEADLESS=1 python -u train.py -log "${env_name}-100k-seed1-JEPA_WM" -seed 1 -config "config_files/100K_CombatSpider_JEPA-WM.yaml" 
+env_name=HuntCow #CombatSpider
+# MINEDOJO_HEADLESS=1 python -u train.py -log "${env_name}-100k-seed1-JEPA_WM" -seed 1 -config "config_files/100K_CombatSpider_JEPA-WM.yaml" 
+MINEDOJO_HEADLESS=1 python -u train.py -log "${env_name}-100k-seed1-JEPA_WM" -seed 1 -config "Experiments/100K_HuntCow_JEPA-WM.yaml" 

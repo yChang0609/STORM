@@ -1,9 +1,10 @@
 Task: "JointTrainAgent"
 Environment:
-  task: "CombatSpider"
+  task: "HuntCow"
   task_parameter:
     image_size: [224,224]
     step_penalty: 0
+    nav_reward_scale: 0.1
     attack_reward: 1
     success_reward: 10
     # max_spawn_range: 10
@@ -20,7 +21,7 @@ BasicSettings:
   ReplayBufferOnGPU: False
 
 JointTrainAgent:
-  SampleMaxSteps: 102000 #102000
+  SampleMaxSteps: 101024 #102000
   BufferMaxLength: 100000 #100000
   BufferWarmUp: 1024 #1024
   NumEnvs: 1

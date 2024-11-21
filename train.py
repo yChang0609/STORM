@@ -234,6 +234,9 @@ if __name__ == "__main__":
         world_model = build_world_model(params, action_dims)
         agent = build_agent(params, action_dims)
 
+        print(world_model)
+        print(agent)
+
         # build replay buffer
         replay_buffer = build_replay_buffer(params, action_dims)
         

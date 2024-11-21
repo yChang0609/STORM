@@ -1,9 +1,10 @@
 Task: "JointTrainAgent"
 Environment:
-  task: "CombatSpider"
+  task: "HuntCow"
   task_parameter:
     image_size: [224,224]
     step_penalty: 0
+    nav_reward_scale: 0.1
     attack_reward: 1
     success_reward: 10
     # max_spawn_range: 10
@@ -20,7 +21,7 @@ BasicSettings:
   ReplayBufferOnGPU: False
 
 JointTrainAgent:
-  SampleMaxSteps: 102000 #102000
+  SampleMaxSteps: 101024 #102000
   BufferMaxLength: 100000 #100000
   BufferWarmUp: 1024 #1024
   NumEnvs: 1
@@ -40,18 +41,26 @@ Models:
   use_amp: true
   WorldModel:
     #World model select
-    ModleName: STORM # STORM / JEPA_WM
+    ModleName: JEPA_WM # STORM / JEPA_WM
    
     #Image input channels
     InChannels: 3
+
+    #JEPA
+    JEPAParams:
+      PatchSize: 16
+      ModelSize: vit_small
+      ModelPath: 
+        - "/home/cgv/Documents/project/EmbodiedAgent/i-jepa/logs/mine/mine-tiny_vit-s16_ep100/jepa-latest.pth.tar"       # Encoder
+        - "/home/cgv/Documents/project/EmbodiedAgent/i-jepa/logs/mine/mine-tiny_vit-s16_ep100/vae-normal-latest.pth.tar"  # Decoder
 
     #VAE
     VAEParams:
       Type: categorical # categorical/continuous
       StochasticDim: 32
-      EncodeFinalFeatureWidth: 7
-      EncodeStemChannels: 32
-      EncodeStemRepeatNum: 0
+      EncodeFinalFeatureWidth: 2
+      EncodeStemChannels: 512
+      EncodeStemRepeatNum: 2
       # Decoding parameters will be repeated with encoding
 
     # dynamic model transformer
@@ -70,4 +79,5 @@ Models:
     Gamma: 0.985
     Lambda: 0.95
     EntropyCoef: 3E-4
+    
 

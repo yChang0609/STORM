@@ -73,8 +73,8 @@ Models:
     InputFeature:
       - 1024  # VAE Categorical 32*32
       - 512   # Dynamic model hidden dim
-    NumLayers: 2
-    HiddenDim: 512
+    NumLayers: 3
+    HiddenDim: 1024
     Gamma: 0.985
     Lambda: 0.95
     EntropyCoef: 3E-4
