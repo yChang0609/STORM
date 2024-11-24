@@ -46,12 +46,12 @@ def process_visualize(img):
 #     return vec_env
 
 
-def eval_episodes(num_episode, params, num_envs,
-                  world_model: WorldModelBase, agent: agents.ActorCriticAgent):
+def eval_episodes(num_episode, params, num_envs, 
+                  world_model: WorldModelBase, agent: agents.ActorCriticAgent, seed=456):
     world_model.eval()
     agent.eval()
     env_name = params["Environment"]["task"]
-    vec_env = build_single_env(params, seed=456)
+    vec_env = build_single_env(params, seed=seed)
 
     print("Current env: " + colorama.Fore.YELLOW + f"{env_name}" + colorama.Style.RESET_ALL)
     sum_reward = np.zeros(num_envs)
@@ -193,15 +193,17 @@ if __name__ == "__main__":
         world_model.load_state_dict(torch.load(f"{root_path}/world_model_{step}.pth"))
         agent.load_state_dict(torch.load(f"{root_path}/agent_{step}.pth"))
         # # eval
-        episode_avg_return = eval_episodes(
-            num_episode=20,
-            params=params,
-            num_envs=1,
-            world_model=world_model,
-            agent=agent
-        )
-
-        results.append([step, episode_avg_return])
+        eval_seed_list = [456, 789, 357, 468, 790]
+        for seed in eval_seed_list:
+            episode_avg_return = eval_episodes(
+                num_episode=20,
+                params=params,
+                num_envs=1,
+                world_model=world_model,
+                agent=agent,
+                seed=seed
+            )
+            results.append([step, episode_avg_return])
     with open(f"eval_result/{args.log}.csv", "w") as fout:
         fout.write("step, episode_avg_return\n")
         for step, episode_avg_return in results:
