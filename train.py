@@ -218,11 +218,17 @@ if __name__ == "__main__":
     # set seed
     seed_np_torch(seed=args.seed)
 
+
+    import os
+    mount_path_env = os.getenv('MOUNT_PATH', "")
+    logger_path = os.path.join(mount_path_env, f"runs/{args.log}")
+    dummy_config_path = os.path.join(mount_path_env, f"runs/{args.log}/config.yaml")
+    
     # tensorboard writer
-    logger = Logger(path=f"runs/{args.log}")
+    logger = Logger(path=logger_path)
 
     # copy config file
-    shutil.copy(args.config, f"runs/{args.log}/config.yaml")
+    shutil.copy(args.config, dummy_config_path)
 
     # distinguish between tasks, other debugging options are removed for simplicity
     training_task = params["Task"]
