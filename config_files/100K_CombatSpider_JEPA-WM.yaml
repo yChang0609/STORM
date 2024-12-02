@@ -55,6 +55,7 @@ Models:
 
     #VAE
     VAEParams:
+      Symlog: False
       Type: categorical # categorical/continuous
       StochasticDim: 32
       EncodeFinalFeatureWidth: 4

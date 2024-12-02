@@ -21,7 +21,7 @@ from utils.build_model import build_agent, build_world_model
 from utils.replay_buffer import ReplayBuffer, build_replay_buffer
 
 
-
+mount_path_env = os.getenv('MOUNT_PATH', "")
 # def build_vec_env(env_name, image_size, num_envs, seed):
 #     # lambda pitfall refs to: https://python.plainenglish.io/python-pitfalls-with-variable-capture-dcfc113f39b7
 #     def lambda_generator(env_name, image_size):
@@ -71,7 +71,8 @@ def joint_train_world_model_agent(params,
                                   seed, logger
                                 ):
     # create ckpt dir
-    os.makedirs(f"ckpt/{args.log}", exist_ok=True)
+    ckpt_path = os.path.join(mount_path_env, f"ckpt/{args.log}")
+    os.makedirs(ckpt_path, exist_ok=True)
 
     # build vec env, not useful in the Atari100k setting
     # but when the max_steps is large, you can use parallel envs to speed up
@@ -188,8 +189,8 @@ def joint_train_world_model_agent(params,
         if total_steps % (save_every_steps//num_envs) == 0:
             # print(colorama.Fore.GREEN + f"Saving model at total steps {total_steps}" + colorama.Style.RESET_ALL)
             print(f"Saving model at total steps {total_steps}")
-            torch.save(world_model.state_dict(), f"ckpt/{args.log}/world_model_{total_steps}.pth")
-            torch.save(agent.state_dict(), f"ckpt/{args.log}/agent_{total_steps}.pth")
+            torch.save(world_model.state_dict(), f"{ckpt_path}/world_model_{total_steps}.pth")
+            torch.save(agent.state_dict(), f"{ckpt_path}/agent_{total_steps}.pth")
 
 if __name__ == "__main__":
     # ignore warnings
@@ -219,8 +220,7 @@ if __name__ == "__main__":
     seed_np_torch(seed=args.seed)
 
 
-    import os
-    mount_path_env = os.getenv('MOUNT_PATH', "")
+
     logger_path = os.path.join(mount_path_env, f"runs/{args.log}")
     dummy_config_path = os.path.join(mount_path_env, f"runs/{args.log}/config.yaml")
     

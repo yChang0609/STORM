@@ -16,7 +16,7 @@ from world_models.modules.Predictior.prediction_decoders import RewardDecoder, T
 
 # Funciton
 from world_models.utils.action2onehot import actions2onehot
-from world_models.utils.functions_losses import SymLogTwoHotLoss, MSELoss, CategoricalKLDivLossWithFreeBits
+from world_models.utils.functions_losses import SymLogTwoHotLoss, SymLogLoss, CategoricalKLDivLossWithFreeBits, symexp , MSELoss
 from world_models.utils.logging import error_msg
 
 '''
@@ -30,14 +30,14 @@ class STORMWorldModel(WorldModelBase):
                  in_channels, in_width,
                  vae_type, stoch_dim, stem_channels, stem_repeat, final_feature_width,
                  transformer_max_length, transformer_hidden_dim, transformer_num_layers, transformer_num_heads,
-                 use_amp):
+                 symlog, use_amp):
         super().__init__()
         self.action_dims = action_dims
         self.transformer_hidden_dim = transformer_hidden_dim
         self.stoch_dim = stoch_dim
         self.use_amp = use_amp
         self.tensor_dtype = torch.bfloat16 if self.use_amp else torch.float32
-
+        self.symlog = symlog
 
         # VAE
         if vae_type == "categorical":
@@ -88,7 +88,7 @@ class STORMWorldModel(WorldModelBase):
             transformer_hidden_dim=transformer_hidden_dim
         )
         
-        self.mse_loss_func = MSELoss()
+        self.mse_loss_func = SymLogLoss() if symlog else MSELoss()
         self.ce_loss = nn.CrossEntropyLoss()
         self.bce_with_logits_loss_func = nn.BCEWithLogitsLoss()
         self.symlog_twohot_loss_func = SymLogTwoHotLoss(num_classes=255, lower_bound=-20, upper_bound=20)
@@ -137,6 +137,7 @@ class STORMWorldModel(WorldModelBase):
 
             if log_video:
                 obs_hat = self._vae.decode(prior_sample)
+                obs_hat = symexp(obs_hat) if self.symlog else obs_hat
                 obs_hat = rearrange(obs_hat, "(B L) C H W -> B L C H W",B=batch_size) 
             else:
                 obs_hat = None

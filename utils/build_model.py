@@ -28,6 +28,7 @@ def build_world_model(params, action_dims):
             transformer_num_layers=params["Models"]["WorldModel"]["TransformerParams"]["NumLayers"],
             transformer_num_heads=params["Models"]["WorldModel"]["TransformerParams"]["NumHeads"],
 
+            symlog=params["Models"]["WorldModel"]["VAEParams"]["Symlog"],
             use_amp=params["Models"]["use_amp"]
         )
 
@@ -51,6 +52,8 @@ def build_world_model(params, action_dims):
             transformer_hidden_dim=params["Models"]["WorldModel"]["TransformerParams"]["HiddenDim"],
             transformer_num_layers=params["Models"]["WorldModel"]["TransformerParams"]["NumLayers"],
             transformer_num_heads=params["Models"]["WorldModel"]["TransformerParams"]["NumHeads"],
+
+            symlog=params["Models"]["WorldModel"]["VAEParams"]["Symlog"],
             use_amp=params["Models"]["use_amp"]
         )
     return wm.cuda()

@@ -19,10 +19,11 @@ def symexp(x):
 class SymLogLoss(nn.Module):
     def __init__(self):
         super().__init__()
+        self.mse_loss = MSELoss()
 
     def forward(self, output, target):
         target = symlog(target)
-        return 0.5*F.mse_loss(output, target)
+        return 0.5 * self.mse_loss(output, target) # 0.5*F.mse_loss(output, target)
 
 
 class SymLogTwoHotLoss(nn.Module):
