@@ -41,14 +41,15 @@ class EmbDecoder(nn.Module):
             )
         )
         self.backbone = nn.Sequential(*backbone)
-
+        
+    @torch.no_grad()
     def forward(self, x):
         batch_size = x.shape[0]
         # x = rearrange(x, "B (H W) C  -> B C H W",B = batch_size,H=self.in_width)
         obs_hat = self.backbone(x)
         # obs_hat = rearrange(obs_hat, "B C H W  -> B L C H W",B = batch_size,H=self.recon_image_width)
         return obs_hat
-    
+    @torch.no_grad()
     def decode_video(self, x):
         batch_size = x.shape[0]
         x = rearrange(x, "B L C H W  -> (B L) C H W")

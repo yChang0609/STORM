@@ -31,9 +31,9 @@ mount_path_env = os.getenv('MOUNT_PATH', "")
 #     vec_env = gymnasium.vector.AsyncVectorEnv(env_fns=env_fns)
 #     return vec_env
 
-def train_world_model_step(replay_buffer: ReplayBuffer, world_model: WorldModelBase, batch_size, demonstration_batch_size, batch_length, logger):
+def train_world_model_step(replay_buffer: ReplayBuffer, world_model: WorldModelBase, batch_size, demonstration_batch_size, batch_length, log_video, logger):
     obs, action, reward, termination = replay_buffer.sample(batch_size, demonstration_batch_size, batch_length)
-    world_model.update(obs, action, reward, termination, logger=logger)
+    world_model.update(obs, action, reward, termination, logger=logger, log_video=log_video)
 
 @torch.no_grad()
 def world_model_imagine_data(replay_buffer: ReplayBuffer,
@@ -145,12 +145,18 @@ def joint_train_world_model_agent(params,
         
         # train world model part >>>
         if replay_buffer.ready() and total_steps % (train_dynamics_every_steps//num_envs) == 0:
+            if total_steps % (save_every_steps//num_envs) == 0:
+                log_video = True
+            else:
+                log_video = False
+
             train_world_model_step(
                 replay_buffer=replay_buffer,
                 world_model=world_model,
                 batch_size=batch_size,
                 demonstration_batch_size=demonstration_batch_size,
                 batch_length=batch_length,
+                log_video=log_video,
                 logger=logger
             )
         # <<< train world model part

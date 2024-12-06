@@ -191,7 +191,7 @@ class STORMWorldModel(WorldModelBase):
 
         return torch.cat([self.latent_buffer, self.hidden_buffer], dim=-1), self.action_buffer, self.reward_hat_buffer, self.termination_hat_buffer
         
-    def update(self, obs, actions, reward, termination, logger=None):
+    def update(self, obs, actions, reward, termination, logger=None, log_video=False):
         self.train()
         batch_size, batch_length = obs.shape[:2]
 
@@ -251,3 +251,6 @@ class STORMWorldModel(WorldModelBase):
             logger.log("WorldModel/representation_loss", representation_loss.item())
             logger.log("WorldModel/representation_real_kl_div", representation_real_kl_div.item())
             logger.log("WorldModel/total_loss", total_loss.item())
+            if log_video:
+                logger.log("Recon/sample_video", obs[::batch_size//16].cpu().float().detach().numpy())
+                logger.log("Recon/rec_video", torch.clamp(obs_hat[::batch_size//16], 0, 1).cpu().float().detach().numpy())

@@ -73,7 +73,7 @@ class JEPAWorldModel(WorldModelBase):
         self.jepa_encoder = nn.Sequential(
             transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
             jepa_encoder,
-            Rearrange('B (H W) C -> B C H W',W=jepa_feat_width),
+            Rearrange('B (H W) C -> B C H W',H=jepa_feat_width),
             )
         jepa_decoder = init_jepa_decoder(
             emb_channel=jepa_encoder.embed_dim,
@@ -246,14 +246,12 @@ class JEPAWorldModel(WorldModelBase):
 
         return torch.cat([self.latent_buffer, self.hidden_buffer], dim=-1), self.action_buffer, self.reward_hat_buffer, self.termination_hat_buffer
         
-    def update(self, obs, actions, reward, termination, logger=None):
+    def update(self, obs, actions, reward, termination, logger=None, log_video=False):
         self.train()
         batch_size, batch_length = obs.shape[:2]
-
+        # reshape [B L * ]-> [B *]
+        vae_obs = rearrange(obs, "B L C H W -> (B L) C H W")
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=self.use_amp):
-            # reshape [B L * ]-> [B *]
-            vae_obs = rearrange(obs, "B L C H W -> (B L) C H W")
-
             # encoding
             with torch.no_grad():
                 emb = self.jepa_encoder(vae_obs) # [Batch&Length Channels sqrt(patch) sqrt(patch)]
@@ -310,3 +308,10 @@ class JEPAWorldModel(WorldModelBase):
             logger.log("WorldModel/representation_loss", representation_loss.item())
             logger.log("WorldModel/representation_real_kl_div", representation_real_kl_div.item())
             logger.log("WorldModel/total_loss", total_loss.item())
+            if log_video:
+                emb_hat = symexp(emb_hat) if self.symlog else emb_hat
+                
+                logger.log("Recon/sample_video", torch.clamp(obs[::batch_size//16], 0, 1).cpu().float().detach().numpy())
+                logger.log("Recon/rec_jepa_video", torch.clamp(tensor_unormalize(self.jepa_decoder.decode_video(emb[::batch_size//16])), 0, 1).cpu().float().detach().numpy())
+                with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=self.use_amp):
+                    logger.log("Recon/rec_vae_video", torch.clamp(tensor_unormalize(self.jepa_decoder.decode_video(emb_hat[::batch_size//16])), 0, 1).cpu().float().detach().numpy())

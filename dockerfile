@@ -19,7 +19,8 @@ COPY --chown=user:user \
     requirements.txt /home/user/requirements.txt
 RUN pip install --no-cache-dir --exists-action=i -r requirements.txt
 
-
 WORKDIR /workspace
 COPY --chown=user:user . /workspace
+
+RUN sed -i -E 's/<AgentSection mode="\w+">/<AgentSection mode="Adventure">/' /home/user/MineDojo/minedojo/sim/mc_meta/minedojo_mission.xml.j2
 
