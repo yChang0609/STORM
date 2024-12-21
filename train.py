@@ -197,6 +197,7 @@ def joint_train_world_model_agent(params,
             print(f"Saving model at total steps {total_steps}")
             torch.save(world_model.state_dict(), f"{ckpt_path}/world_model_{total_steps}.pth")
             torch.save(agent.state_dict(), f"{ckpt_path}/agent_{total_steps}.pth")
+    vec_env.close()
 
 if __name__ == "__main__":
     # ignore warnings
@@ -242,6 +243,8 @@ if __name__ == "__main__":
         # getting action_dim with dummy env
         dummy_env = build_single_env(params, seed=1)
         action_dims = list(dummy_env.action_space.nvec)
+        dummy_env.close()
+        
         # build world model and agent
         world_model = build_world_model(params, action_dims)
         agent = build_agent(params, action_dims)

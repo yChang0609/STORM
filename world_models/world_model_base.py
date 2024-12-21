@@ -54,3 +54,7 @@ class WorldModelBase(nn.Module):
         
     def update(self, obs, actions, reward, termination, logger=None, log_video=False):
         raise NotImplementedError("Subclasses must implement the method.")
+    
+    # for reconstruction 
+    def reconstruction(self, obs):
+        raise NotImplementedError("Subclasses must implement the method.")

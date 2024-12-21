@@ -254,3 +254,22 @@ class STORMWorldModel(WorldModelBase):
             if log_video:
                 logger.log("Recon/sample_video", obs[::batch_size//16].cpu().float().detach().numpy())
                 logger.log("Recon/rec_video", torch.clamp(obs_hat[::batch_size//16], 0, 1).cpu().float().detach().numpy())
+    
+    def reconstruction(self, obs):
+        self.eval()
+        with torch.no_grad():
+            batch_size, batch_length = obs.shape[:2]
+            with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=self.use_amp):
+                vae_obs = rearrange(obs, "B L C H W -> (B L) C H W")
+
+                # encoding
+                post_logits = self._vae.encode(vae_obs)
+                sample = self._vae.sample(post_logits, sample_mode="random_sample")
+
+                # decoding image
+                obs_hat = self._vae.decode(sample)
+                obs_hat = symexp(obs_hat) if self.symlog else obs_hat
+
+                obs_hat = rearrange(obs_hat, "(B L) C H W -> B L C H W",B=batch_size)
+
+        return obs, obs_hat

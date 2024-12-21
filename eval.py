@@ -1,6 +1,8 @@
 import gymnasium
 import argparse
 
+import os
+
 import cv2
 import numpy as np
 from einops import rearrange
@@ -14,12 +16,72 @@ import pprint
 
 from utils.utils import seed_np_torch, load_config
 from utils.build_model import *
-import archive.env_wrapper as env_wrapper
 
 from world_models.world_model_base import WorldModelBase
 from agents import agents
 from utils.build_model import build_agent, build_world_model
 from libs.env_wrapper import build_single_env
+
+from PIL import Image
+
+# parse arguments
+parser = argparse.ArgumentParser()
+parser.add_argument("-log", type=str, required=True)
+parser.add_argument("-seed", type=int, required=True)
+parser.add_argument("-config", type=str, required=True)
+parser.add_argument("-mode", type=str, required=False,default="agent")
+
+args = parser.parse_args()
+
+print(str(args))
+
+mount_path_env = os.getenv('MOUNT_PATH', "")
+ckpt_path = os.path.join(mount_path_env,"ckpt/")
+eval_result_path = os.path.join(mount_path_env,f"eval_result/{args.log}")
+os.makedirs(eval_result_path, exist_ok=True)
+
+
+def save_tensor_with_channels(tensor, output_dir, base_file_name="original"):
+    """
+    Save a tensor with dynamic channels as images.
+
+    Args:
+        tensor (torch.Tensor): Input tensor of shape [B, C, H, W] or [B, N, C, H, W].
+        output_dir (str): Directory to save the images.
+        base_file_name (str): Base name for saved images.
+    """
+    # Ensure the output directory exists
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Handle dimensions
+    if len(tensor.shape) == 5:  # [B, N, C, H, W]
+        batch_size, batch_len, _, height, width = tensor.shape
+    elif len(tensor.shape) == 4:  # [B, C, H, W]
+        tensor = tensor.unsqueeze(1)  # Add a dummy channel dimension
+        batch_size, batch_len, _, height, width = tensor.shape
+    else:
+        raise ValueError("Unsupported tensor shape. Expected 4D or 5D tensor.")
+
+    # Iterate over batch and channel dimensions
+    assert batch_size == 1
+    for batch_idx in range(batch_size):
+        for idx in range(batch_len):
+            # Extract individual image tensor [C, H, W]
+            image_tensor = tensor[batch_idx, idx]
+            
+            # Permute to (H, W, C)
+            image_tensor = image_tensor.permute(1, 2, 0)  # [H, W, C]
+
+            # Normalize to range [0, 255]
+            image_tensor = (image_tensor - image_tensor.min()) / (image_tensor.max() - image_tensor.min()) * 255
+            image_array = image_tensor.cpu().byte().numpy()
+
+            # Convert to PIL image and save
+            image = Image.fromarray(image_array)
+            # file_name = f"step{idx}_{base_file_name}_batch{batch_idx}.png"
+            file_name = f"step{idx}_{base_file_name}.png"
+            image.save(os.path.join(output_dir, file_name))
+
 
 
 def process_visualize(img):
@@ -29,44 +91,25 @@ def process_visualize(img):
     return img
 
 
-# def build_single_env(env_name, image_size):
-#     env = gymnasium.make(env_name, full_action_space=False, render_mode="rgb_array", frameskip=1)
-#     env = env_wrapper.MaxLast2FrameSkipWrapper(env, skip=4)
-#     env = gymnasium.wrappers.ResizeObservation(env, shape=image_size)
-#     return env
-
-
-# def build_vec_env(env_name, image_size, num_envs):
-#     # lambda pitfall refs to: https://python.plainenglish.io/python-pitfalls-with-variable-capture-dcfc113f39b7
-#     def lambda_generator(env_name, image_size):
-#         return lambda: build_single_env(env_name, image_size)
-#     env_fns = []
-#     env_fns = [lambda_generator(env_name, image_size) for i in range(num_envs)]
-#     vec_env = gymnasium.vector.AsyncVectorEnv(env_fns=env_fns)
-#     return vec_env
-
-
-def eval_episodes(num_episode, params, num_envs, 
-                  world_model: WorldModelBase, agent: agents.ActorCriticAgent, seed=456):
+def eval_episodes(step, num_episode, params, num_envs, world_model: WorldModelBase, agent: agents.ActorCriticAgent, seed=456):
+    name = params["Environment"]["task"]
+    print("Current env: " + colorama.Fore.YELLOW + f"{name}" + colorama.Style.RESET_ALL)
     world_model.eval()
     agent.eval()
-    env_name = params["Environment"]["task"]
+
     vec_env = build_single_env(params, seed=seed)
-
-    print("Current env: " + colorama.Fore.YELLOW + f"{env_name}" + colorama.Style.RESET_ALL)
-    sum_reward = np.zeros(num_envs)
     current_obs, current_info = vec_env.reset()
-
+    
+    sum_reward = np.zeros(num_envs)
     context_obs = deque(maxlen=16)
     context_action = deque(maxlen=16)
 
-    success_count = 0
+    fps = 30
     save_frames = []
     fourcc = cv2.VideoWriter_fourcc(*'mp4v') 
-    fps = 30
-    img_size = params["BasicSettings"]["ImageSize"]
-    frame_size = (img_size, img_size)
+    frame_size = tuple(reversed(params["Environment"]["task_parameter"]["image_size"]))
 
+    success_count = 0
     final_rewards = []
     # for total_steps in tqdm(range(max_steps//num_envs)):
     while True:
@@ -107,8 +150,8 @@ def eval_episodes(num_episode, params, num_envs,
                     final_rewards.append(sum_reward[i])
                     
                     # insert done_frame
-                    done_frame = np.ones((224, 224, 3), dtype=np.uint8) * 255
-                    text = f"Ep{len(final_rewards)}:{sum_reward[i]}"
+                    done_frame = np.ones((frame_size[0], frame_size[1], 3), dtype=np.uint8) * 255
+                    text = f"Ep{len(final_rewards)}:{sum_reward[i]:.2f}"
                     font = cv2.FONT_HERSHEY_SIMPLEX
                     font_scale = 1
                     thickness = 2
@@ -135,12 +178,59 @@ def eval_episodes(num_episode, params, num_envs,
                         # save_frames += [cv2.cvtColor(current_obs.transpose(1, 2, 0), cv2.COLOR_RGB2BGR)]*4
                         print(f"success_rate: {(success_count / num_episode * 100):.2f}%")
                         print("Mean reward: " + colorama.Fore.YELLOW + f"{np.mean(final_rewards)}" + colorama.Style.RESET_ALL)
-                        out = cv2.VideoWriter(f"eval_result/MineDojo/episodes{num_episode}_{np.mean(final_rewards)}.mp4", fourcc, fps, frame_size)
+                        os.makedirs(f"{eval_result_path}/{step}_videos", exist_ok=True)
+                        out = cv2.VideoWriter(f"{eval_result_path}/{step}_videos/{seed}-episodes{num_episode}_{np.mean(final_rewards):.2f}.mp4", fourcc, fps, frame_size)
                         for frame in save_frames:
                             out.write(frame)
                         out.release()
-                        return np.mean(final_rewards)
+                        vec_env.close()
+                        return final_rewards, np.mean(final_rewards)
         # <<< sample part
+        
+
+
+def eval_reconstruction(step, params, world_model: WorldModelBase, agent: agents.ActorCriticAgent, seed=456, sequence=False):
+    name = params["Environment"]["task"]
+    print("Current env: " + colorama.Fore.YELLOW + f"{name}" + colorama.Style.RESET_ALL)
+
+    world_model.eval()
+    agent.eval()
+
+    vec_env = build_single_env(params, seed=seed)
+    current_obs, current_info = vec_env.reset()
+    
+    living = True
+    context_obs = deque(maxlen=16)
+    context_action = deque(maxlen=16)
+
+    # sample
+    while living:
+        # sample part >>>
+        with torch.no_grad():
+            if len(context_action) == 0:
+                action = vec_env.action_space.sample()
+            else:
+                context_latent,_ = world_model.encode_obs(torch.cat(list(context_obs), dim=1))
+                model_context_action = np.stack(list(context_action), axis=0)
+                model_context_action = torch.Tensor(model_context_action.reshape(1, *model_context_action.shape)).cuda() #[np.newaxis, 0, 1]
+                prior_flattened_sample, last_dist_feat = world_model.calc_last_dist_feat(context_latent, model_context_action)
+                action = agent.sample_as_env_action(
+                    torch.cat([prior_flattened_sample, last_dist_feat], dim=-1),
+                    greedy=False
+                )
+                action = np.squeeze(action)
+        context_obs.append(rearrange(torch.Tensor(current_obs.copy()).cuda(), "C H W -> 1 1 C H W")/255)
+        context_action.append(action)
+        obs, reward, done, truncated, info = vec_env.step(action)
+        current_obs = obs
+        current_info = info
+        living = (not done) or (current_info['elapsed_steps'] > 125)
+    recon_list = list(context_obs) if sequence else list(context_obs[-1])
+    obs, obs_hat = world_model.reconstruction(torch.cat(recon_list, dim=1))
+    save_tensor_with_channels(obs, f"{eval_result_path}/{step}_reconstruction/", f"original")
+    save_tensor_with_channels(obs_hat, f"{eval_result_path}/{step}_reconstruction/", f"vae-recon")
+
+    vec_env.close()
 
 
 if __name__ == "__main__":
@@ -151,14 +241,6 @@ if __name__ == "__main__":
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
 
-    # parse arguments
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-log", type=str, required=True)
-    parser.add_argument("-seed", type=int, required=True)
-    parser.add_argument("-config", type=str, required=True)
-    args = parser.parse_args()
-
-    print(str(args))
     params = None
     with open(args.config, 'r') as y_file:
         params = yaml.load(y_file, Loader=yaml.FullLoader)
@@ -166,9 +248,6 @@ if __name__ == "__main__":
         pp = pprint.PrettyPrinter(indent=4)
         pp.pprint(params)
     
-
-    # print(colorama.Fore.RED + str(conf) + colorama.Style.RESET_ALL)
-
     # set seed
     seed_np_torch(seed=params["BasicSettings"]["Seed"])
 
@@ -176,11 +255,11 @@ if __name__ == "__main__":
     # import train
     dummy_env = build_single_env(params, seed=1)
     action_dims = list(dummy_env.action_space.nvec)
-
+    dummy_env.close()
     # build world model and agent
     world_model = build_world_model(params, action_dims)
     agent = build_agent(params, action_dims)
-    root_path = f"ckpt/{args.log}"
+    root_path = f"{ckpt_path}/{args.log}"
 
     import glob
     pathes = glob.glob(f"{root_path}/world_model_*.pth")
@@ -188,23 +267,45 @@ if __name__ == "__main__":
     steps.sort()
     steps = steps[-1:]
     print(steps)
+    episode_returns = []
     results = []
-    for step in tqdm(steps):
-        world_model.load_state_dict(torch.load(f"{root_path}/world_model_{step}.pth"))
-        agent.load_state_dict(torch.load(f"{root_path}/agent_{step}.pth"))
-        # # eval
-        eval_seed_list = [456, 789, 357, 468, 790]
-        for seed in eval_seed_list:
-            episode_avg_return = eval_episodes(
-                num_episode=20,
-                params=params,
-                num_envs=1,
-                world_model=world_model,
-                agent=agent,
-                seed=seed
+    if args.mode == "agent":
+        for step in tqdm(steps):
+            world_model.load_state_dict(torch.load(f"{root_path}/world_model_{step}.pth"))
+            agent.load_state_dict(torch.load(f"{root_path}/agent_{step}.pth"))
+            # # eval
+            eval_seed_list = [456, 789, 357, 468, 790]
+            for seed in eval_seed_list:
+                episode_rewards, episode_avg_return = eval_episodes(
+                    step=step,
+                    num_episode=20,
+                    params=params,
+                    num_envs=1,
+                    world_model=world_model,
+                    agent=agent,
+                    seed=seed
+                )
+                episode_returns.append([[i, episode_rewards[i]] for i in range(len(episode_rewards))])
+                results.append([step, episode_avg_return])
+        write_file = os.path.join(eval_result_path, "return.csv")
+        with open(write_file, "w+") as fout:
+            for i in range(len(results)):
+                fout.write("episode, episode_return\n")
+                for ep, reward in episode_returns[i]:
+                    fout.write(f"{ep},{reward}\n")
+                fout.write("step, episode_avg_return\n")
+                step, episode_avg_return = results[i]
+                fout.write(f"{step},{episode_avg_return}\n")
+                fout.write("-----------------------------------\n")
+    elif "reconstruction" in args.mode:
+        for step in tqdm(steps):
+            world_model.load_state_dict(torch.load(f"{root_path}/world_model_{step}.pth"))
+            agent.load_state_dict(torch.load(f"{root_path}/agent_{step}.pth"))
+            eval_reconstruction(
+                    step=step,
+                    params=params,
+                    world_model=world_model,
+                    agent=agent,
+                    seed=123,
+                    sequence="clip" in args.mode
             )
-            results.append([step, episode_avg_return])
-    with open(f"eval_result/{args.log}.csv", "w") as fout:
-        fout.write("step, episode_avg_return\n")
-        for step, episode_avg_return in results:
-            fout.write(f"{step},{episode_avg_return}\n")
