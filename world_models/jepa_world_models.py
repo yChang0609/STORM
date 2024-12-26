@@ -9,6 +9,7 @@ from world_models.world_model_base import WorldModelBase
 
 # VAE
 
+
 # JEPA
 from torchvision import transforms
 from world_models.modules.JEPA.jepa_encoder import init_jepa_encoder, load_encoder
@@ -24,7 +25,7 @@ from world_models.modules.Predictior.prediction_decoders import RewardDecoder, T
 
 # Funciton
 from world_models.utils.action2onehot import actions2onehot
-from world_models.utils.functions_losses import SymLogTwoHotLoss, MSELoss, SymLogLoss, CategoricalKLDivLossWithFreeBits, symexp
+from world_models.utils.functions_losses import SymLogTwoHotLoss, MSELoss, SymLogLoss, CategoricalKLDivLossWithFreeBits, symexp,symlog
 from world_models.utils.logging import error_msg
 
 '''
@@ -39,6 +40,24 @@ def tensor_unormalize(tensor):
     std = [0.229, 0.224, 0.225]
     return tensor * torch.tensor(std).view(3, 1, 1).cuda() + torch.tensor(mean).view(3, 1, 1).cuda()
 
+def dynamic_import(module_class_str):
+    import importlib
+    module_name, class_name = module_class_str.rsplit(".", 1)
+    module = importlib.import_module(module_name)
+    return getattr(module, class_name)
+
+vae_configs = {
+    "categorical": {
+        "vae_class": "world_models.modules.VAE.categorical_vae.CategoricalVAE",
+        "dist_head": "world_models.modules.VAE.categorical_vae.CategoricalDistHead",
+        "stoch_flattened_dim": lambda stoch_dim: stoch_dim * stoch_dim,
+    },
+    "continuous": {
+        "vae_class": "world_models.modules.VAE.continuous_vae.ContinuousVAE",
+        "dist_head": "world_models.modules.VAE.continuous_vae.GaussianDistHead",
+        "stoch_flattened_dim": lambda stoch_dim: stoch_dim,
+    },
+}
 
 class JEPAWorldModel(WorldModelBase):
     def __init__(self, 
@@ -87,21 +106,16 @@ class JEPAWorldModel(WorldModelBase):
         self.jepa_decoder = jepa_decoder
 
         # VAE
-        if vae_type == "categorical":
-            from world_models.modules.VAE.categorical_vae import CategoricalVAE as vae
-            from world_models.modules.VAE.categorical_vae import CategoricalDistHead as DistHead
-            self.stoch_flattened_dim = stoch_dim*stoch_dim
+        if vae_type not in vae_configs:
+            raise ValueError(f"Unsupported VAE type: {vae_type}")
+        config = vae_configs[vae_type]
+        VAE = dynamic_import(config["vae_class"])
+        DistHead = dynamic_import(config["dist_head"])
+        self.stoch_flattened_dim = config["stoch_flattened_dim"](stoch_dim)
 
-        elif vae_type == "continuous":
-            from world_models.modules.VAE.continuous_vae import ContinuousVAE as vae
-            from world_models.modules.VAE.continuous_vae import GaussianDistHead as DistHead
-            self.stoch_flattened_dim = stoch_dim
-            assert error_msg(f"Continuous VAE Loss not design.")
-
-        else:
-            assert error_msg(f"This VAE type not implement{vae_type}.")
-
-        self._vae = vae(
+        if vae_type == "continuous":
+            raise NotImplementedError("Continuous VAE Loss not designed.")
+        self._vae = VAE(
             z_dim=stoch_dim,
             in_channels=jepa_encoder.embed_dim, 
             in_feature_width=jepa_feat_width,
@@ -110,51 +124,6 @@ class JEPAWorldModel(WorldModelBase):
             final_feature_width=final_feature_width, 
             use_amp=use_amp,
         )
-        # TODO : refactor VAE create
-        # import importlib
-        # def dynamic_import(module_class_str):
-        #     module_name, class_name = module_class_str.rsplit(".", 1)
-        #     module = importlib.import_module(module_name)
-        #     return getattr(module, class_name)?
-        # vae_configs = {
-        #     "categorical": {
-        #         "vae_class": "world_models.modules.VAE.categorical_vae.CategoricalVAE",
-        #         "dist_head": "world_models.modules.VAE.categorical_vae.CategoricalDistHead",
-        #         "stoch_flattened_dim": lambda stoch_dim: stoch_dim * stoch_dim,
-        #     },
-        #     "continuous": {
-        #         "vae_class": "world_models.modules.VAE.continuous_vae.ContinuousVAE",
-        #         "dist_head": "world_models.modules.VAE.continuous_vae.GaussianDistHead",
-        #         "stoch_flattened_dim": lambda stoch_dim: stoch_dim,
-        #     },
-        # }
-
-        # # 確保提供的 VAE 類型是支持的
-        # if vae_type not in vae_configs:
-        #     raise ValueError(f"Unsupported VAE type: {vae_type}")
-
-        # # 獲取對應配置
-        # config = vae_configs[vae_type]
-
-        # # 動態導入 VAE 類和分布頭
-        # vae = dynamic_import(config["vae_class"])
-        # DistHead = dynamic_import(config["dist_head"])
-        # self.stoch_flattened_dim = config["stoch_flattened_dim"](stoch_dim)
-
-        # # 檢查特殊條件
-        # if vae_type == "continuous":
-        #     raise NotImplementedError("Continuous VAE Loss not designed.")
-
-        # # 初始化 VAE
-        # self._vae = vae(
-        #     z_dim=stoch_dim,
-        #     in_channels=jepa_encoder.embed_dim,
-        #     in_feature_width=jepa_feat_width,
-        #     stem_channels=stem_channels,
-        #     stem_repeat=stem_repeat,
-        #     final_feature_width=final_feature_width,
-        #     use_amp=use_amp,
-        # )
         
         # Transformer
         self.storm_transformer = StochasticTransformerKVCache(
@@ -193,14 +162,15 @@ class JEPAWorldModel(WorldModelBase):
         obs = rearrange(obs, "B L C H W -> (B L) C H W") # process input shape
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=self.use_amp):
             with torch.no_grad():
-                emb = self.jepa_encoder(obs) # [Batch&Length Channels sqrt(patch) sqrt(patch)]
+                emb_raw = self.jepa_encoder(obs) # [Batch&Length Channels sqrt(patch) sqrt(patch)]
+                emb = symlog(emb_raw) if self.symlog else emb_raw
             post_logits = self._vae.encode(emb)
             sample = self._vae.sample(post_logits, sample_mode="random_sample")
             flattened_sample = self._vae.flatten_sample(sample)
         # emb = rearrange(emb, "(B L) C H W -> B L C H W",B=batch_size) # process output shape
-        emb = rearrange(emb, "(B L) C H W -> B L C H W",B=batch_size) # process output shape
-        flattened_sample = rearrange(sample, "(B L) K C -> B L (K C)",B=batch_size) # process output shape
-        return flattened_sample, emb
+        emb_raw = rearrange(emb_raw, "(B L) C H W -> B L C H W",B=batch_size) # process output shape
+        flattened_sample = rearrange(flattened_sample, "(B L) C -> B L C",B=batch_size) # process output shape
+        return flattened_sample, emb_raw
     
     # calculate last distribution feature
     def calc_last_dist_feat(self, latent, actions):
@@ -299,19 +269,23 @@ class JEPAWorldModel(WorldModelBase):
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=self.use_amp):
             # encoding
             with torch.no_grad():
-                emb = self.jepa_encoder(vae_obs) # [Batch&Length Channels sqrt(patch) sqrt(patch)]
+                emb_raw = self.jepa_encoder(vae_obs) # [Batch&Length Channels sqrt(patch) sqrt(patch)]
+                emb = symlog(emb_raw) if self.symlog else emb_raw
+
             post_logits = self._vae.encode(emb)
             sample = self._vae.sample(post_logits, sample_mode="random_sample")
             flattened_sample = self._vae.flatten_sample(sample)
-            
+            # rearrange(sample, "B K C -> B (K C)")
             # decoding image
             emb_hat = self._vae.decode(sample)
 
             # reshape [B * ]-> [B L *]
             post_logits = rearrange(post_logits[0], "(B L) K C -> B L K C",B=batch_size)
-            flattened_sample = rearrange(sample, "(B L) K C -> B L (K C)",B=batch_size) # process output shape
+            flattened_sample = rearrange(flattened_sample, "(B L) C -> B L C",B=batch_size) # process output shape
+
             # emb = rearrange(emb, "(B L) C H W -> B L C H W",B=batch_size)
             emb = rearrange(emb, "(B L) C H W -> B L C H W",B=batch_size)
+            emb_raw = rearrange(emb_raw, "(B L) C H W -> B L C H W",B=batch_size)
             emb_hat = rearrange(emb_hat, "(B L) C H W -> B L C H W",B=batch_size)
 
             # transformer
@@ -357,7 +331,7 @@ class JEPAWorldModel(WorldModelBase):
                 emb_hat = symexp(emb_hat) if self.symlog else emb_hat
                 
                 logger.log("Recon/sample_video", torch.clamp(obs[::batch_size//16], 0, 1).cpu().float().detach().numpy())
-                logger.log("Recon/rec_jepa_video", torch.clamp(tensor_unormalize(self.jepa_decoder.decode_video(emb[::batch_size//16])), 0, 1).cpu().float().detach().numpy())
+                logger.log("Recon/rec_jepa_video", torch.clamp(tensor_unormalize(self.jepa_decoder.decode_video(emb_raw[::batch_size//16])), 0, 1).cpu().float().detach().numpy())
                 with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=self.use_amp):
                     logger.log("Recon/rec_vae_video", torch.clamp(tensor_unormalize(self.jepa_decoder.decode_video(emb_hat[::batch_size//16])), 0, 1).cpu().float().detach().numpy())
     def reconstruction(self, obs):
@@ -368,7 +342,8 @@ class JEPAWorldModel(WorldModelBase):
                 vae_obs = rearrange(obs, "B L C H W -> (B L) C H W")
 
                 # encoding
-                emb = self.jepa_encoder(vae_obs) # [Batch&Length Channels sqrt(patch) sqrt(patch)]
+                emb_raw = self.jepa_encoder(vae_obs) # [Batch&Length Channels sqrt(patch) sqrt(patch)]
+                emb = symlog(emb_raw) if self.symlog else emb_raw
                 post_logits = self._vae.encode(emb)
                 sample = self._vae.sample(post_logits, sample_mode="random_sample")
                 flattened_sample = self._vae.flatten_sample(sample)
@@ -377,7 +352,7 @@ class JEPAWorldModel(WorldModelBase):
                 emb_hat = self._vae.decode(sample)
                 emb_hat = symexp(emb_hat) if self.symlog else emb_hat
 
-                emb = rearrange(emb, "(B L) C H W -> B L C H W",B=batch_size)
+                emb_raw = rearrange(emb_raw, "(B L) C H W -> B L C H W",B=batch_size)
                 emb_hat = rearrange(emb_hat, "(B L) C H W -> B L C H W",B=batch_size)
                 obs_hat = tensor_unormalize(self.jepa_decoder.decode_video(emb_hat))
         return obs, obs_hat

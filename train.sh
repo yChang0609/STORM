@@ -15,11 +15,14 @@ env_name=HuntCow #CombatSpider HuntCow
 # MINEDOJO_HEADLESS=1 python -u train.py -log "ReconTest/${env_name}-100k-seed1-JEPA_WM" -seed 1 -config "Experiments/100K_CombatSpider_JEPA-WM-recon.yaml"
 # MINEDOJO_HEADLESS=1 python -u train.py -log "ReconTest/${env_name}-100k-seed1-JEPA_WM" -seed 1 -config "Experiments/100K_CombatSpider_JEPA-WM-recon&symlog.yaml"
 
-MINEDOJO_HEADLESS=1 python -u train.py -log "Tuning/${env_name}-100k-seed1-JEPA-WM-default" -seed 1 -config "Experiments/HuntCow/100K_HuntCow_JEPA-WM-default.yaml"
-MINEDOJO_HEADLESS=1 python -u train.py -log "Tuning/${env_name}-100k-seed1-JEPA-WM-pretirain" -seed 1 -config "Experiments/HuntCow/100K_HuntCow_JEPA-WM-pretirain.yaml"
+# MINEDOJO_HEADLESS=1 python -u train.py -log "Tuning/${env_name}-100k-seed1-JEPA-WM-default" -seed 1 -config "Experiments/HuntCow/100K_HuntCow_JEPA-WM-default.yaml"
+# MINEDOJO_HEADLESS=1 python -u train.py -log "Tuning/${env_name}-100k-seed1-JEPA-WM-pretirain" -seed 1 -config "Experiments/HuntCow/100K_HuntCow_JEPA-WM-pretirain.yaml"
 MINEDOJO_HEADLESS=1 python -u train.py -log "Tuning/${env_name}-100k-seed1-JEPA-WM-symlog" -seed 1 -config "Experiments/HuntCow/100K_HuntCow_JEPA-WM-symlog.yaml"
-MINEDOJO_HEADLESS=1 python -u train.py -log "Tuning/${env_name}-100k-seed1-STORM-default" -seed 1 -config "Experiments/HuntCow/100K_HuntCow_STORM-default.yaml"
-MINEDOJO_HEADLESS=1 python -u train.py -log "Tuning/${env_name}-100k-seed1-STORM-symlog" -seed 1 -config "Experiments/HuntCow/100K_HuntCow_STORM-symlog.yaml"
+# MINEDOJO_HEADLESS=1 python -u train.py -log "Tuning/${env_name}-100k-seed1-JEPA-WM-symlog_256" -seed 1 -config "Experiments/HuntCow/100K_HuntCow_JEPA-WM-symlog.yaml"
+
+# MINEDOJO_HEADLESS=1 python -u train.py -log "Tuning/${env_name}-100k-seed1-STORM-default" -seed 1 -config "Experiments/HuntCow/100K_HuntCow_STORM-default.yaml"
+# MINEDOJO_HEADLESS=1 python -u train.py -log "Tuning/${env_name}-100k-seed1-STORM-symlog" -seed 1 -config "Experiments/HuntCow/100K_HuntCow_STORM-symlog.yaml"
 
 # MINEDOJO_HEADLESS=1 python -u train.py -log "${env_name}-100k-seed1-JEPA_WM-pretirain-0" -seed 1 -config "Experiments/100K_CombatSpider_JEPA-WM-pretirain.yaml"
+# MINEDOJO_HEADLESS=1 python -u train.py -log "Tuning/100K_HuntCow_JEPA-WM-pretirain_VAEextra100K_HuntCow_JEPA-WM-pretirain_VAEextra_symlog" -seed 1 -config "Experiments/HuntCow/100K_HuntCow_JEPA-WM-pretirain_VAEextra_symlog.yaml"
 
