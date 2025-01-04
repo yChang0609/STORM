@@ -27,6 +27,7 @@ from world_models.modules.Predictior.prediction_decoders import RewardDecoder, T
 from world_models.utils.action2onehot import actions2onehot
 from world_models.utils.functions_losses import SymLogTwoHotLoss, MSELoss, SymLogLoss, CategoricalKLDivLossWithFreeBits, symexp,symlog
 from world_models.utils.logging import error_msg
+from world_models.utils.utils import vae_configs, dynamic_import
 
 '''
 Import Agent for interaction with the world model, which processes and responds to image data
@@ -40,24 +41,7 @@ def tensor_unormalize(tensor):
     std = [0.229, 0.224, 0.225]
     return tensor * torch.tensor(std).view(3, 1, 1).cuda() + torch.tensor(mean).view(3, 1, 1).cuda()
 
-def dynamic_import(module_class_str):
-    import importlib
-    module_name, class_name = module_class_str.rsplit(".", 1)
-    module = importlib.import_module(module_name)
-    return getattr(module, class_name)
 
-vae_configs = {
-    "categorical": {
-        "vae_class": "world_models.modules.VAE.categorical_vae.CategoricalVAE",
-        "dist_head": "world_models.modules.VAE.categorical_vae.CategoricalDistHead",
-        "stoch_flattened_dim": lambda stoch_dim: stoch_dim * stoch_dim,
-    },
-    "continuous": {
-        "vae_class": "world_models.modules.VAE.continuous_vae.ContinuousVAE",
-        "dist_head": "world_models.modules.VAE.continuous_vae.GaussianDistHead",
-        "stoch_flattened_dim": lambda stoch_dim: stoch_dim,
-    },
-}
 
 class JEPAWorldModel(WorldModelBase):
     def __init__(self, 
@@ -111,10 +95,10 @@ class JEPAWorldModel(WorldModelBase):
         config = vae_configs[vae_type]
         VAE = dynamic_import(config["vae_class"])
         DistHead = dynamic_import(config["dist_head"])
-        self.stoch_flattened_dim = config["stoch_flattened_dim"](stoch_dim)
 
         if vae_type == "continuous":
             raise NotImplementedError("Continuous VAE Loss not designed.")
+
         self._vae = VAE(
             z_dim=stoch_dim,
             in_channels=jepa_encoder.embed_dim, 
@@ -124,7 +108,8 @@ class JEPAWorldModel(WorldModelBase):
             final_feature_width=final_feature_width, 
             use_amp=use_amp,
         )
-        
+        self.stoch_flattened_dim = self._vae.stoch_flattened_dim
+
         # Transformer
         self.storm_transformer = StochasticTransformerKVCache(
             stoch_dim=self.stoch_flattened_dim,

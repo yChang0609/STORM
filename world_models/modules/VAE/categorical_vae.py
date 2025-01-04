@@ -4,11 +4,8 @@ import torch.nn.functional as F
 from torch.distributions import OneHotCategorical
 from einops import rearrange
 from einops.layers.torch import Rearrange
-
-
 from world_models.modules.VAE.vae_base import *
-import world_models.modules.VAE.encoder_decoder as model
-from math import sqrt
+
 
 class CategoricalDistHead(nn.Module):
     '''
@@ -36,43 +33,27 @@ class CategoricalVAE(BaseVAE):
     '''Categorical Variational Auto Encoder'''
     def __init__(self, 
                  z_dim:int, 
-                 in_channels:int, in_feature_width:int, 
-                 stem_channels:int, stem_repeat:int,
-                 final_feature_width:int, use_amp, pixel_suffle_channels=None):
-        super().__init__()
+                 in_channels:int, in_feature_width:int, use_amp, 
+                 coder_type, coder_params, pixel_suffle_channels=None,
+                 **kwargs):
+        
         self.use_amp = use_amp
         self.in_channels=int(in_channels)
         self.in_feature_width=int(in_feature_width)
         self.stoch_dim = z_dim
         self.stoch_flattened_dim = self.stoch_dim*self.stoch_dim
-
-        encoder_in_channels = in_channels if pixel_suffle_channels==None else pixel_suffle_channels
-        r = int(sqrt(in_channels//encoder_in_channels))
-        
-        self.pixel_shuffle = nn.PixelShuffle(r)
-        self.pixel_unshuffle = nn.PixelUnshuffle(r)
-
-        self.encoder = model.Encoder(
-            in_channels=encoder_in_channels,
-            in_feature_width=in_feature_width*r, 
-            final_feature_width=final_feature_width,
-            stem_channels=stem_channels,
-            num_repeat=stem_repeat
+        super().__init__(
+            stoch_flattened_dim=self.stoch_flattened_dim,
+            in_channels=in_channels, in_feature_width=in_feature_width,
+            pixel_suffle_channels=pixel_suffle_channels,
+            coder_type=coder_type,
+            coder_params=coder_params,
+            **kwargs,
         )
 
         self.dist_head = CategoricalDistHead(
             feat_dim=self.encoder.last_channels*self.encoder.final_feature_width*self.encoder.final_feature_width,
             stoch_dim=self.stoch_dim
-        )
-
-        self.decoder = model.Decoder(
-            in_dim= self.stoch_flattened_dim, 
-            last_channels=self.encoder.last_channels, 
-            final_feature_width=self.encoder.final_feature_width, 
-            recover_channels=encoder_in_channels,
-            recover_width=in_feature_width*r,
-            stem_channels=stem_channels,
-            num_repeat=self.encoder.num_repeat
         )
 
     def stright_throught_gradient(self, logits, sample_mode="random_sample"):

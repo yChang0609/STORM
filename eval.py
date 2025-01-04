@@ -240,13 +240,9 @@ if __name__ == "__main__":
 
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
-
-    params = None
-    with open(args.config, 'r') as y_file:
-        params = yaml.load(y_file, Loader=yaml.FullLoader)
-        print('loaded params...')
-        pp = pprint.PrettyPrinter(indent=4)
-        pp.pprint(params)
+    
+    # params
+    params = load_config(args.config)
     
     # set seed
     seed_np_torch(seed=params["BasicSettings"]["Seed"])

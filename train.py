@@ -8,10 +8,9 @@ from tqdm import tqdm
 import colorama
 import shutil
 import os
-import yaml
-import pprint
 
-from utils.utils import seed_np_torch, Logger
+
+from utils.utils import seed_np_torch, Logger, load_config
 
 from libs.env_wrapper import build_single_env
 
@@ -215,13 +214,7 @@ if __name__ == "__main__":
     print(colorama.Fore.RED + str(args) + colorama.Style.RESET_ALL)
 
     # load config file to params
-    # conf = load_config(args.config)
-    params = None
-    with open(args.config, 'r') as y_file:
-        params = yaml.load(y_file, Loader=yaml.FullLoader)
-        print('loaded params...')
-        pp = pprint.PrettyPrinter(indent=4)
-        pp.pprint(params)
+    params = load_config(args.config)
 
     # set seed
     seed_np_torch(seed=args.seed)

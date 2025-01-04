@@ -18,6 +18,7 @@ from world_models.modules.Predictior.prediction_decoders import RewardDecoder, T
 from world_models.utils.action2onehot import actions2onehot
 from world_models.utils.functions_losses import SymLogTwoHotLoss, SymLogLoss, CategoricalKLDivLossWithFreeBits, symexp , MSELoss
 from world_models.utils.logging import error_msg
+from world_models.utils.utils import vae_configs, dynamic_import
 
 '''
 Import Agent for interaction with the world model, which processes and responds to image data
@@ -28,7 +29,7 @@ class STORMWorldModel(WorldModelBase):
     def __init__(self, 
                  action_dims,
                  in_channels, in_width,
-                 vae_type, stoch_dim, stem_channels, stem_repeat, final_feature_width,
+                 vae_type, stoch_dim, coder_type, coder_params,
                  transformer_max_length, transformer_hidden_dim, transformer_num_layers, transformer_num_heads,
                  symlog, use_amp):
         super().__init__()
@@ -40,29 +41,24 @@ class STORMWorldModel(WorldModelBase):
         self.symlog = symlog
 
         # VAE
-        if vae_type == "categorical":
-            from world_models.modules.VAE.categorical_vae import CategoricalVAE as vae
-            from world_models.modules.VAE.categorical_vae import CategoricalDistHead as DistHead
-            self.stoch_flattened_dim = stoch_dim*stoch_dim
+        if vae_type not in vae_configs:
+            raise ValueError(f"Unsupported VAE type: {vae_type}")
+        config = vae_configs[vae_type]
+        VAE = dynamic_import(config["vae_class"])
+        DistHead = dynamic_import(config["dist_head"])
 
-        elif vae_type == "continuous":
-            from world_models.modules.VAE.continuous_vae import ContinuousVAE as vae
-            from world_models.modules.VAE.continuous_vae import GaussianDistHead as DistHead
-            self.stoch_flattened_dim = stoch_dim
-            assert error_msg(f"Continuous VAE Loss not design.")
+        if vae_type == "continuous":
+            raise NotImplementedError("Continuous VAE Loss not designed.")
 
-        else:
-            assert error_msg(f"This VAE type not implement{vae_type}.")
-
-        self._vae = vae(
+        self._vae = VAE(
             z_dim=stoch_dim,
             in_channels=in_channels, 
             in_feature_width=in_width,
-            stem_channels=stem_channels, 
-            stem_repeat=stem_repeat,
-            final_feature_width=final_feature_width, 
             use_amp=use_amp,
+            coder_type=coder_type,
+            coder_params=coder_params ,
         )
+        self.stoch_flattened_dim = self._vae.stoch_flattened_dim
 
         # Transformer
         self.storm_transformer = StochasticTransformerKVCache(
@@ -137,7 +133,7 @@ class STORMWorldModel(WorldModelBase):
 
             if log_video:
                 obs_hat = self._vae.decode(prior_sample)
-                obs_hat = symexp(obs_hat) if self.symlog else obs_hat
+                # obs_hat = symexp(obs_hat) if self.symlog else obs_hat
                 obs_hat = rearrange(obs_hat, "(B L) C H W -> B L C H W",B=batch_size) 
             else:
                 obs_hat = None
@@ -268,7 +264,7 @@ class STORMWorldModel(WorldModelBase):
 
                 # decoding image
                 obs_hat = self._vae.decode(sample)
-                obs_hat = symexp(obs_hat) if self.symlog else obs_hat
+                # obs_hat = symexp(obs_hat) if self.symlog else obs_hat
 
                 obs_hat = rearrange(obs_hat, "(B L) C H W -> B L C H W",B=batch_size)
 

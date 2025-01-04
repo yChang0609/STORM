@@ -52,10 +52,6 @@ class ActorCriticAgent(nn.Module):
                 nn.RMSNorm(hidden_dim),
                 nn.SiLU()
             ])
-        # self.actor = nn.Sequential(
-        #     *actor,
-        #     nn.Linear(hidden_dim, action_dim)
-        # )
 
         self.actor = MultiCategoricalActor(       
             preprocess_net=nn.Sequential(*actor),

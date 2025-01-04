@@ -5,10 +5,24 @@ import random
 from tensorboardX import SummaryWriter
 from einops import repeat
 from contextlib import contextmanager
-import time
-import yacs
+import yaml
+import pprint
 from yacs.config import CfgNode as CN
 
+CONFIG_VERSION = "0.0.0"
+
+def load_config(config_path):
+    params = None
+    with open(config_path, 'r') as y_file:
+        params = yaml.load(y_file, Loader=yaml.FullLoader)
+        print('loaded params...')
+        assert "config_version" in params, "config missing config_version"
+        assert params["config_version"] == CONFIG_VERSION, "config_version not match"
+        print('loaded params success !!')
+
+        pp = pprint.PrettyPrinter(indent=4)
+        pp.pprint(params)
+    return params
 
 def seed_np_torch(seed=20010105):
     random.seed(seed)
@@ -58,7 +72,7 @@ class EMAScalar():
         return self.scalar
 
 
-def load_config(config_path):
+def _load_config(config_path):
     conf = CN()
     # Task need to be RandomSample/TrainVQVAE/TrainWorldModel
     conf.Task = ""

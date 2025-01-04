@@ -43,9 +43,8 @@ def build_world_model(params, action_dims):
             # VAE
             vae_type=params["Models"]["WorldModel"]["VAEParams"]["Type"], 
             stoch_dim=params["Models"]["WorldModel"]["VAEParams"]["StochasticDim"], 
-            final_feature_width=params["Models"]["WorldModel"]["VAEParams"]["EncodeFinalFeatureWidth"], 
-            stem_channels=params["Models"]["WorldModel"]["VAEParams"]["EncodeStemChannels"], 
-            stem_repeat=params["Models"]["WorldModel"]["VAEParams"]["EncodeStemRepeatNum"], 
+            coder_type=params["Models"]["WorldModel"]["VAEParams"]["CoderType"], 
+            coder_params=params["Models"]["WorldModel"]["VAEParams"]["CoderParams"], 
             
             # Transformer
             transformer_max_length=params["Models"]["WorldModel"]["TransformerParams"]["MaxLength"],

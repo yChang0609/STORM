@@ -1,3 +1,4 @@
+config_version: "0.0.0"
 Task: "JointTrainAgent"
 Environment:
   task: "HuntCow"
@@ -51,10 +52,10 @@ Models:
       Symlog: False
       Type: categorical # categorical/continuous
       StochasticDim: 32
-      EncodeFinalFeatureWidth: 7
-      EncodeStemChannels: 32
-      EncodeStemRepeatNum: 0
-      # Decoding parameters will be repeated with encoding
+      CoderType: Dreamer
+      CoderParams: {depth: 64, mults: [2, 3, 4, 4],  act: 'silu',  norm: 'rms', kernel: 5, strided: True} # Encoder and Decoder sheard same parameters
+      # CoderType: STORM
+      # CoderParams: {final_feature_width: 7, stem_channels: 32, num_repeat: 0, act: 'relu',  norm: 'batch'} # Encoder and Decoder sheard same parametersㄋ
 
     # dynamic model transformer
     TransformerParams:
