@@ -3,7 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import OneHotCategorical
 from einops import rearrange, reduce
-from einops.layers.torch import Rearrange
+from torch.distributions import MultivariateNormal
+from world_models.modules.VAE.vae_base import BaseDistributionParams, CategoricalDistributionParams, GaussianDistributionParams
 
 
 @torch.no_grad()
@@ -83,6 +84,60 @@ class CategoricalKLDivLossWithFreeBits(nn.Module):
         kl_div = torch.max(torch.ones_like(kl_div)*self.free_bits, kl_div)
         return kl_div, real_kl_div
 
+
+class GaussianKLDivLossWithFreeBits(nn.Module):
+    def __init__(self, free_bits) -> None:
+        super().__init__()
+        self.free_bits = free_bits
+
+    def forward(self, p_mean, p_cov, q_mean, q_cov):
+        """
+        Compute the KL divergence between two Gaussian distributions with free bits.
+
+        Args:
+            p_mean: Mean vector of the first Gaussian distribution (batch, dim).
+            p_cov: Covariance matrix (or diagonal) of the first Gaussian distribution (batch, dim).
+            q_mean: Mean vector of the second Gaussian distribution (batch, dim).
+            q_cov: Covariance matrix (or diagonal) of the second Gaussian distribution (batch, dim).
+
+        Returns:
+            kl_div: KL divergence with free bits applied.
+            real_kl_div: Raw KL divergence before applying free bits.
+        """
+        # Create Gaussian distributions
+        p_dist = MultivariateNormal(loc=p_mean, covariance_matrix=torch.diag_embed(p_cov))
+        q_dist = MultivariateNormal(loc=q_mean, covariance_matrix=torch.diag_embed(q_cov))
+        # Compute KL divergence
+        kl_div = torch.distributions.kl.kl_divergence(p_dist, q_dist)
+        # Reduce KL divergence over dimensions if necessary
+        kl_div = kl_div.mean()
+        # Save the original KL divergence
+        real_kl_div = kl_div
+        # Apply free bits threshold
+        kl_div = torch.max(torch.ones_like(kl_div) * self.free_bits, kl_div)
+        return kl_div, real_kl_div
+
+class UniversalKLLoss(nn.Module):
+    def __init__(self, free_bits=0.0):
+        super().__init__()
+        self.free_bits = free_bits
+        self.categorical_kl_loss = CategoricalKLDivLossWithFreeBits(free_bits)
+        self.gaussian_kl_loss = GaussianKLDivLossWithFreeBits(free_bits)
+
+    def forward(self, p_params: BaseDistributionParams, q_params: BaseDistributionParams):
+        if not isinstance(p_params, type(q_params)):
+            raise ValueError(f"Distributions must be of the same type for KL divergence calculation. p_params:{type(p_params)},q_params:{type(q_params)} ")
+
+        if isinstance(p_params, CategoricalDistributionParams):
+            return self.categorical_kl_loss(p_params.logits(), q_params.logits())
+        elif isinstance(p_params, GaussianDistributionParams):
+            p_mean, p_logvar = p_params.params
+            q_mean, q_logvar = q_params.params
+            p_cov = torch.exp(p_logvar)
+            q_cov = torch.exp(q_logvar)
+            return self.gaussian_kl_loss(p_mean, p_cov, q_mean, q_cov)
+        else:
+            raise ValueError(f"Unsupported distribution type: {type(p_params)}")
 
 if __name__ == "__main__":
     loss_func = SymLogTwoHotLoss(255, -20, 20)

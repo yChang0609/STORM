@@ -7,13 +7,12 @@ from einops.layers.torch import Rearrange
 from world_models.modules.VAE.vae_base import *
 
 
-class CategoricalDistHead(nn.Module):
+class CategoricalDistHead(BaseDistHead):
     '''
     Dist: abbreviation of distribution
     '''
     def __init__(self, feat_dim, stoch_dim) -> None:
-        super().__init__()
-        self.stoch_dim = stoch_dim
+        super().__init__(feat_dim, stoch_dim)
         self.post_head = nn.Linear(feat_dim, stoch_dim*stoch_dim)
 
     def unimix(self, logits, mixing_ratio=0.01):
@@ -27,7 +26,7 @@ class CategoricalDistHead(nn.Module):
         logits = self.post_head(x)
         logits = rearrange(logits, "B (K C) -> B K C", K=self.stoch_dim)
         logits = self.unimix(logits)
-        return logits
+        return CategoricalDistributionParams([logits])
    
 class CategoricalVAE(BaseVAE):
     '''Categorical Variational Auto Encoder'''
@@ -56,8 +55,8 @@ class CategoricalVAE(BaseVAE):
             stoch_dim=self.stoch_dim
         )
 
-    def stright_throught_gradient(self, logits, sample_mode="random_sample"):
-        dist = OneHotCategorical(logits=logits)
+    def stright_throught_gradient(self, params:CategoricalDistributionParams, sample_mode="random_sample"):
+        dist = OneHotCategorical(logits=params.logits())
         if sample_mode == "random_sample":
             sample = dist.sample() + dist.probs - dist.probs.detach()
         elif sample_mode == "mode":
@@ -66,18 +65,16 @@ class CategoricalVAE(BaseVAE):
             sample = dist.probs
         return sample
     
-    def flatten_sample(self, sample):
-        return rearrange(sample, "B K C -> B (K C)")
 
     # -- VAE interface
-    def encode(self, input: Tensor) -> List[Tensor]:
+    def encode(self, input: Tensor) -> CategoricalDistributionParams:
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=self.use_amp):
             # x = rearrange(input, "B (H W) C -> B C H W", C=self.in_channels, H=self.in_feature_width)
             x = self.pixel_shuffle(input)
             x = self.encoder(x)
             x = rearrange(x, "B C H W  -> B (C H W)", C=self.encoder.last_channels, H=self.encoder.final_feature_width)
-            post_logits = self.dist_head(x)
-        return [post_logits]
+            return self.dist_head(x)
+        
     
     def decode(self, z: Tensor) -> Tensor:
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=self.use_amp):
@@ -87,11 +84,14 @@ class CategoricalVAE(BaseVAE):
             # x = rearrange(x, "B C H W  -> B (H W) C", C=self.in_channels, H=self.in_feature_width)
         return x
     
-    def sample(self, params:List[Tensor], **kwargs) -> Tensor:
+    def sample(self, params:CategoricalDistributionParams, **kwargs) -> Tensor:
         sample_mode = kwargs.get('sample_mode', "random_sample")
-        return self.stright_throught_gradient(params[0], sample_mode=sample_mode)
+        return self.stright_throught_gradient(params, sample_mode=sample_mode)
     
-    def forward(self, input: Tensor, **kwargs) -> List[Tensor]:
+    def flatten_sample(self, sample):
+        return rearrange(sample, "B K C -> B (K C)")
+    
+    def forward(self, input: Tensor, **kwargs) -> List[Tensor|CategoricalDistributionParams]:
         post_logits = self.encode(input)
         sample_mode = kwargs.get('sample_mode', "random_sample")
         z = self.sample(post_logits, sample_mode=sample_mode)

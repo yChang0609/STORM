@@ -16,7 +16,7 @@ from world_models.modules.Predictior.prediction_decoders import RewardDecoder, T
 
 # Funciton
 from world_models.utils.action2onehot import actions2onehot
-from world_models.utils.functions_losses import SymLogTwoHotLoss, SymLogLoss, CategoricalKLDivLossWithFreeBits, symexp , MSELoss
+from world_models.utils.functions_losses import SymLogTwoHotLoss, SymLogLoss, symexp , MSELoss, UniversalKLLoss
 from world_models.utils.logging import error_msg
 from world_models.utils.utils import vae_configs, dynamic_import
 
@@ -46,9 +46,6 @@ class STORMWorldModel(WorldModelBase):
         config = vae_configs[vae_type]
         VAE = dynamic_import(config["vae_class"])
         DistHead = dynamic_import(config["dist_head"])
-
-        if vae_type == "continuous":
-            raise NotImplementedError("Continuous VAE Loss not designed.")
 
         self._vae = VAE(
             z_dim=stoch_dim,
@@ -88,7 +85,7 @@ class STORMWorldModel(WorldModelBase):
         self.ce_loss = nn.CrossEntropyLoss()
         self.bce_with_logits_loss_func = nn.BCEWithLogitsLoss()
         self.symlog_twohot_loss_func = SymLogTwoHotLoss(num_classes=255, lower_bound=-20, upper_bound=20)
-        self.categorical_kl_div_loss = CategoricalKLDivLossWithFreeBits(free_bits=1)
+        self.kl_div_loss = UniversalKLLoss(free_bits=1)
         self.optimizer = torch.optim.Adam(self.parameters(), lr=1e-4)
         self.scaler = torch.amp.GradScaler("cuda", enabled=self.use_amp)
 
@@ -99,7 +96,7 @@ class STORMWorldModel(WorldModelBase):
             post_logits = self._vae.encode(obs)
             sample = self._vae.sample(post_logits, sample_mode="random_sample")
             flattened_sample = self._vae.flatten_sample(sample)
-        flattened_sample = rearrange(sample, "(B L) K C -> B L (K C)",B=batch_size) # process output shape
+        flattened_sample = rearrange(flattened_sample, "(B L) C -> B L C",B=batch_size) # process output shape
         return flattened_sample, None
     
     # calculate last distribution feature
@@ -112,7 +109,7 @@ class STORMWorldModel(WorldModelBase):
 
             _last_dist_feat = rearrange(last_dist_feat, "B L C -> (B L) C") 
             prior_logits = self._prior_dist_head(_last_dist_feat)
-            prior_sample = self._vae.sample([prior_logits], sample_mode="random_sample")
+            prior_sample = self._vae.sample(prior_logits, sample_mode="random_sample")
             prior_flattened_sample = self._vae.flatten_sample(prior_sample)
             prior_flattened_sample = rearrange(prior_flattened_sample, "(B L) C -> B L C",B=batch_size) 
 
@@ -127,7 +124,7 @@ class STORMWorldModel(WorldModelBase):
             prior_logits = self._prior_dist_head(_dist_feat)
 
             # decoding
-            prior_sample = self._vae.sample([prior_logits], sample_mode="random_sample")
+            prior_sample = self._vae.sample(prior_logits, sample_mode="random_sample")
             prior_flattened_sample = self._vae.flatten_sample(prior_sample)
             prior_flattened_sample = rearrange(prior_flattened_sample, "(B L) C -> B L C",B=batch_size) 
 
@@ -204,8 +201,7 @@ class STORMWorldModel(WorldModelBase):
             obs_hat = self._vae.decode(sample)
 
             # reshape [B * ]-> [B L *]
-            post_logits = rearrange(post_logits[0], "(B L) K C -> B L K C",B=batch_size)
-            flattened_sample = rearrange(sample, "(B L) K C -> B L (K C)",B=batch_size) # process output shape
+            flattened_sample = rearrange(flattened_sample, "(B L) C -> B L C",B=batch_size) # process output shape
             obs_hat = rearrange(obs_hat, "(B L) C H W -> B L C H W",B=batch_size)
             
             # transformer
@@ -215,7 +211,10 @@ class STORMWorldModel(WorldModelBase):
             # prior dit head
             _dist_feat = rearrange(dist_feat, "B L C -> (B L) C") 
             prior_logits = self._prior_dist_head(_dist_feat)
-            prior_logits = rearrange(prior_logits, "(B L) K C -> B L K C",B=batch_size) 
+
+            # reshape [B * ]-> [B L *]
+            post_logits.batch_rearrange("(B L)","B L", B=batch_size)
+            prior_logits.batch_rearrange("(B L)","B L", B=batch_size)
 
             # decoding reward and termination with dist_feat
             reward_hat = self.reward_decoder(dist_feat)
@@ -226,8 +225,8 @@ class STORMWorldModel(WorldModelBase):
             reward_loss = self.symlog_twohot_loss_func(reward_hat, reward)
             termination_loss = self.bce_with_logits_loss_func(termination_hat, termination)
             # dyn-rep loss
-            dynamics_loss, dynamics_real_kl_div = self.categorical_kl_div_loss(post_logits[:, 1:].detach(), prior_logits[:, :-1])
-            representation_loss, representation_real_kl_div = self.categorical_kl_div_loss(post_logits[:, 1:], prior_logits[:, :-1].detach())
+            dynamics_loss, dynamics_real_kl_div = self.kl_div_loss(post_logits[:, 1:].detach(), prior_logits[:, :-1])
+            representation_loss, representation_real_kl_div = self.kl_div_loss(post_logits[:, 1:], prior_logits[:, :-1].detach())
             total_loss = reconstruction_loss + reward_loss + termination_loss + 0.5*dynamics_loss + 0.1*representation_loss
 
         # gradient descent

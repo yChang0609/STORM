@@ -8,6 +8,7 @@ Environment:
     nav_reward_scale: 0.1
     attack_reward: 1
     success_reward: 10
+    cow_only: False
     # max_spawn_range: 10
     # target_quantities: 1
     # max_episode_len: 500
@@ -50,12 +51,12 @@ Models:
     #VAE
     VAEParams:
       Symlog: False
-      Type: categorical # categorical/continuous
+      Type: categorical # categorical:32/continuous:4096
       StochasticDim: 32
-      CoderType: Dreamer
-      CoderParams: {depth: 64, mults: [2, 3, 4, 4],  act: 'silu',  norm: 'rms', kernel: 5, strided: True} # Encoder and Decoder sheard same parameters
-      # CoderType: STORM
-      # CoderParams: {final_feature_width: 7, stem_channels: 32, num_repeat: 0, act: 'relu',  norm: 'batch'} # Encoder and Decoder sheard same parametersㄋ
+      # CoderType: Dreamer
+      # CoderParams: {depth: 64, mults: [2, 3, 4, 4],  act: 'silu',  norm: 'rms', kernel: 5, strided: True} # Encoder and Decoder sheard same parameters
+      CoderType: STORM
+      CoderParams: {final_feature_width: 7, stem_channels: 32, num_repeat: 0, act: 'relu',  norm: 'batch'} # Encoder and Decoder sheard same parametersㄋ
 
     # dynamic model transformer
     TransformerParams:
