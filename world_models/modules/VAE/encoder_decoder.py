@@ -19,7 +19,7 @@ class STORM:
                 lambda channel: 
                     nn.Sequential(
                         Rearrange('B C H W -> B H W C'),
-                        nn.RMSNorm(channel, elementwise_affine=False),
+                        nn.RMSNorm(channel),
                         Rearrange('B H W C -> B C H W')
                     ) if norm == 'rms' else nn.BatchNorm2d(channel)
             )
@@ -109,7 +109,7 @@ class STORM:
                 lambda channel: 
                     nn.Sequential(
                         Rearrange('B C H W -> B H W C'),
-                        nn.RMSNorm(channel, elementwise_affine=False),
+                        nn.RMSNorm(channel),
                         Rearrange('B H W C -> B C H W')
                     ) if norm == 'rms' else nn.BatchNorm2d(channel)
             )
@@ -275,7 +275,7 @@ class Dreamer:
                 lambda channel: 
                     nn.Sequential(
                         Rearrange('B C H W -> B H W C'),
-                        nn.RMSNorm(channel, elementwise_affine=False),
+                        nn.RMSNorm(channel),
                         Rearrange('B H W C -> B C H W')
                     ) if norm == 'rms' else nn.BatchNorm2d(channel)
             )
