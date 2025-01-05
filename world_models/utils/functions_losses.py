@@ -104,17 +104,23 @@ class GaussianKLDivLossWithFreeBits(nn.Module):
             kl_div: KL divergence with free bits applied.
             real_kl_div: Raw KL divergence before applying free bits.
         """
-        # Create Gaussian distributions
-        p_dist = MultivariateNormal(loc=p_mean, covariance_matrix=torch.diag_embed(p_cov))
-        q_dist = MultivariateNormal(loc=q_mean, covariance_matrix=torch.diag_embed(q_cov))
-        # Compute KL divergence
-        kl_div = torch.distributions.kl.kl_divergence(p_dist, q_dist)
-        # Reduce KL divergence over dimensions if necessary
-        kl_div = kl_div.mean()
-        # Save the original KL divergence
-        real_kl_div = kl_div
+        # Ensure variances are positive
+        p_var = torch.clamp(p_var, min=1e-6)
+        q_var = torch.clamp(q_var, min=1e-6)
+
+        # Compute KL divergence for each dimension
+        log_term = torch.log(q_var) - torch.log(p_var)
+        trace_term = p_var / q_var
+        mean_diff_term = (p_mean - q_mean) ** 2 / q_var
+        kl_per_dim = 0.5 * (trace_term + mean_diff_term - 1 + log_term)
+
+        # Sum over dimensions
+        kl_div = kl_per_dim.sum(dim=-1)  # Sum over dimensions
+        real_kl_div = kl_div.mean()  # Average over batch
+
         # Apply free bits threshold
         kl_div = torch.max(torch.ones_like(kl_div) * self.free_bits, kl_div)
+
         return kl_div, real_kl_div
 
 class UniversalKLLoss(nn.Module):
