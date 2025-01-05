@@ -90,15 +90,15 @@ class GaussianKLDivLossWithFreeBits(nn.Module):
         super().__init__()
         self.free_bits = free_bits
 
-    def forward(self, p_mean, p_cov, q_mean, q_cov):
+    def forward(self, p_mean, p_var, q_mean, q_var):
         """
         Compute the KL divergence between two Gaussian distributions with free bits.
 
         Args:
             p_mean: Mean vector of the first Gaussian distribution (batch, dim).
-            p_cov: Covariance matrix (or diagonal) of the first Gaussian distribution (batch, dim).
+            p_var: Variance vector (diagonal of covariance matrix) of the first Gaussian distribution (batch, dim).
             q_mean: Mean vector of the second Gaussian distribution (batch, dim).
-            q_cov: Covariance matrix (or diagonal) of the second Gaussian distribution (batch, dim).
+            q_var: Variance vector (diagonal of covariance matrix) of the second Gaussian distribution (batch, dim).
 
         Returns:
             kl_div: KL divergence with free bits applied.
@@ -116,7 +116,8 @@ class GaussianKLDivLossWithFreeBits(nn.Module):
 
         # Sum over dimensions
         kl_div = kl_per_dim.sum(dim=-1)  # Sum over dimensions
-        real_kl_div = kl_div.mean()  # Average over batch
+        kl_div = kl_div.mean()  # Average over batch
+        real_kl_div = kl_div
 
         # Apply free bits threshold
         kl_div = torch.max(torch.ones_like(kl_div) * self.free_bits, kl_div)
@@ -139,9 +140,9 @@ class UniversalKLLoss(nn.Module):
         elif isinstance(p_params, GaussianDistributionParams):
             p_mean, p_logvar = p_params.params
             q_mean, q_logvar = q_params.params
-            p_cov = torch.exp(p_logvar)
-            q_cov = torch.exp(q_logvar)
-            return self.gaussian_kl_loss(p_mean, p_cov, q_mean, q_cov)
+            p_var = torch.exp(p_logvar)
+            q_var = torch.exp(q_logvar)
+            return self.gaussian_kl_loss(p_mean, p_var, q_mean, q_var)
         else:
             raise ValueError(f"Unsupported distribution type: {type(p_params)}")
 
