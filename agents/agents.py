@@ -44,13 +44,13 @@ class ActorCriticAgent(nn.Module):
         actor = [
             nn.Linear(feat_dim, hidden_dim, bias=False),
             nn.RMSNorm(hidden_dim),
-            nn.SiLU()
+            nn.SiLU(inplace=True)
         ]
         for i in range(num_layers - 1):
             actor.extend([
                 nn.Linear(hidden_dim, hidden_dim, bias=False),
                 nn.RMSNorm(hidden_dim),
-                nn.SiLU()
+                nn.SiLU(inplace=True)
             ])
 
         self.actor = MultiCategoricalActor(       
@@ -63,13 +63,13 @@ class ActorCriticAgent(nn.Module):
         critic = [
             nn.Linear(feat_dim, hidden_dim, bias=False),
             nn.RMSNorm(hidden_dim),
-            nn.SiLU()
+            nn.SiLU(inplace=True)
         ]
         for i in range(num_layers - 1):
             critic.extend([
                 nn.Linear(hidden_dim, hidden_dim, bias=False),
                 nn.RMSNorm(hidden_dim),
-                nn.SiLU()
+                nn.SiLU(inplace=True)
             ])
 
         self.critic = nn.Sequential(

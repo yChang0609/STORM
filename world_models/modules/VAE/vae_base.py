@@ -80,23 +80,6 @@ class BaseVAE(nn.Module):
         config = coder_configs[coder_type]
         network = dynamic_import(config["network"])
 
-        ### STORM 
-        ## encoder
-        # final_feature_width, stem_channels=256, num_repeat=2):
-
-        ## decoer
-        # final_feature_width, stem_channels=256, num_repeat=2):
-        
-        #### Dreamer
-        ## encoder
-        # depth=64, mults=(2, 3, 4, 4), layers=3, 
-        # act='gelu', norm='rms', 
-        # symlog=True, kernel=5, strided=False):
-
-        ## decoder
-        # depth=64, mults=(2, 3, 4, 4), layers=3,
-        # act='gelu', norm='rms', 
-        # outscale=1.0, kernel=5, strided=False):
         self.encoder = network.Encoder(
             in_channels=encoder_in_channels,
             in_feature_width=in_feature_width*r, 

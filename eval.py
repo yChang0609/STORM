@@ -1,4 +1,4 @@
-import gymnasium
+import glob
 import argparse
 
 import os
@@ -26,9 +26,14 @@ from PIL import Image
 
 # parse arguments
 parser = argparse.ArgumentParser()
-parser.add_argument("-log", type=str, required=True)
-parser.add_argument("-seed", type=int, required=True)
-parser.add_argument("-config", type=str, required=True)
+parser.add_argument(
+    "-logs", 
+    nargs='+', 
+    help="Log file names",
+    required=True
+)
+# parser.add_argument("-seed", type=int, required=True)
+# parser.add_argument("-config", type=str, required=True)
 parser.add_argument("-mode", type=str, required=False,default="agent")
 
 args = parser.parse_args()
@@ -37,9 +42,6 @@ print(str(args))
 
 mount_path_env = os.getenv('MOUNT_PATH', "")
 ckpt_path = os.path.join(mount_path_env,"ckpt/")
-eval_result_path = os.path.join(mount_path_env,f"eval_result/{args.log}")
-os.makedirs(eval_result_path, exist_ok=True)
-
 
 def save_tensor_with_channels(tensor, output_dir, base_file_name="original"):
     """
@@ -89,7 +91,6 @@ def process_visualize(img):
     img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
     img = cv2.resize(img, (640, 640))
     return img
-
 
 def eval_episodes(step, num_episode, params, num_envs, world_model: WorldModelBase, agent: agents.ActorCriticAgent, seed=456):
     name = params["Environment"]["task"]
@@ -187,9 +188,7 @@ def eval_episodes(step, num_episode, params, num_envs, world_model: WorldModelBa
                         return final_rewards, np.mean(final_rewards)
         # <<< sample part
         
-
-
-def eval_reconstruction(step, params, world_model: WorldModelBase, agent: agents.ActorCriticAgent, seed=456, sequence=False):
+def collect_data(params, world_model: WorldModelBase, agent: agents.ActorCriticAgent,  seed=456):
     name = params["Environment"]["task"]
     print("Current env: " + colorama.Fore.YELLOW + f"{name}" + colorama.Style.RESET_ALL)
 
@@ -202,7 +201,6 @@ def eval_reconstruction(step, params, world_model: WorldModelBase, agent: agents
     living = True
     context_obs = deque(maxlen=16)
     context_action = deque(maxlen=16)
-
     # sample
     while living:
         # sample part >>>
@@ -225,28 +223,22 @@ def eval_reconstruction(step, params, world_model: WorldModelBase, agent: agents
         current_obs = obs
         current_info = info
         living = (not done) or (current_info['elapsed_steps'] > 125)
-    recon_list = list(context_obs) if sequence else list(context_obs[-1])
-    obs, obs_hat = world_model.reconstruction(torch.cat(recon_list, dim=1))
-    save_tensor_with_channels(obs, f"{eval_result_path}/{step}_reconstruction/", f"original")
-    save_tensor_with_channels(obs_hat, f"{eval_result_path}/{step}_reconstruction/", f"vae-recon")
-
     vec_env.close()
-
-
-if __name__ == "__main__":
-    # ignore warnings
-    import warnings
-    warnings.filterwarnings('ignore')
-
-    torch.backends.cuda.matmul.allow_tf32 = True
-    torch.backends.cudnn.allow_tf32 = True
+    return list(context_obs)
     
-    # params
-    params = load_config(args.config)
-    
-    # set seed
-    seed_np_torch(seed=params["BasicSettings"]["Seed"])
 
+def eval_reconstruction(step, replay_data, world_model: WorldModelBase, export_path, sequence=False):
+    world_model.eval()
+    agent.eval()
+    recon_list = replay_data if sequence else replay_data[-1]
+    obs, obs_hat = world_model.reconstruction(torch.cat(recon_list, dim=1))
+    save_tensor_with_channels(obs, f"{export_path}/{step}_reconstruction/", f"original")
+    save_tensor_with_channels(obs_hat, f"{export_path}/{step}_reconstruction/", f"vae-recon")
+
+
+def load_model(log_file):
+    config = os.path.join("runs", log_file, "config.yaml")
+    params = load_config(config)
     # build and load model/agent
     # import train
     dummy_env = build_single_env(params, seed=1)
@@ -255,25 +247,48 @@ if __name__ == "__main__":
     # build world model and agent
     world_model = build_world_model(params, action_dims)
     agent = build_agent(params, action_dims)
-    root_path = f"{ckpt_path}/{args.log}"
 
-    import glob
+    root_path = os.path.join(ckpt_path,log_file)
     pathes = glob.glob(f"{root_path}/world_model_*.pth")
     steps = [int(path.split("_")[-1].split(".")[0]) for path in pathes]
     steps.sort()
-    steps = steps[-1:]
-    print(steps)
-    episode_returns = []
-    results = []
-    if args.mode == "agent":
-        for step in tqdm(steps):
-            world_model.load_state_dict(torch.load(f"{root_path}/world_model_{step}.pth"))
-            agent.load_state_dict(torch.load(f"{root_path}/agent_{step}.pth"))
-            # # eval
+    load_step = steps[-1]
+    world_model.load_state_dict(torch.load(f"{root_path}/world_model_{load_step}.pth"))
+    agent.load_state_dict(torch.load(f"{root_path}/agent_{load_step}.pth"))
+    return world_model, agent, params , load_step
+
+if __name__ == "__main__":
+    # ignore warnings
+    import warnings
+    warnings.filterwarnings('ignore')
+
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+
+    assert len(args.logs) > 1
+    if "reconstruction" in args.mode:
+        dummy_world_model, dummy_agent, dummy_params, _ = load_model(args.logs[0])
+        replay_data = collect_data(
+            params=dummy_params,
+            world_model=dummy_world_model,
+            agent=dummy_agent,
+            seed=123
+        )
+        del dummy_world_model, dummy_agent, dummy_params
+
+
+    for log in args.logs:
+        eval_result_path = os.path.join(mount_path_env,f"eval_result/{log}")
+        os.makedirs(eval_result_path, exist_ok=True)
+        world_model, agent, params, load_step = load_model(log)
+        if args.mode == "agent":
+            episode_returns = []
+            results = []
+            seed_np_torch(seed=params["BasicSettings"]["Seed"])
             eval_seed_list = [456, 789, 357, 468, 790]
             for seed in eval_seed_list:
                 episode_rewards, episode_avg_return = eval_episodes(
-                    step=step,
+                    step=load_step,
                     num_episode=20,
                     params=params,
                     num_envs=1,
@@ -282,26 +297,23 @@ if __name__ == "__main__":
                     seed=seed
                 )
                 episode_returns.append([[i, episode_rewards[i]] for i in range(len(episode_rewards))])
-                results.append([step, episode_avg_return])
-        write_file = os.path.join(eval_result_path, "return.csv")
-        with open(write_file, "w+") as fout:
-            for i in range(len(results)):
-                fout.write("episode, episode_return\n")
-                for ep, reward in episode_returns[i]:
-                    fout.write(f"{ep},{reward}\n")
-                fout.write("step, episode_avg_return\n")
-                step, episode_avg_return = results[i]
-                fout.write(f"{step},{episode_avg_return}\n")
-                fout.write("-----------------------------------\n")
-    elif "reconstruction" in args.mode:
-        for step in tqdm(steps):
-            world_model.load_state_dict(torch.load(f"{root_path}/world_model_{step}.pth"))
-            agent.load_state_dict(torch.load(f"{root_path}/agent_{step}.pth"))
+                results.append([load_step, episode_avg_return])
+            write_file = os.path.join(eval_result_path, "return.csv")
+            with open(write_file, "w+") as fout:
+                for i in range(len(results)):
+                    fout.write("episode, episode_return\n")
+                    for ep, reward in episode_returns[i]:
+                        fout.write(f"{ep},{reward}\n")
+                    fout.write("step, episode_avg_return\n")
+                    load_step, episode_avg_return = results[i]
+                    fout.write(f"{load_step},{episode_avg_return}\n")
+                    fout.write("-----------------------------------\n")
+        elif "reconstruction" in args.mode:
             eval_reconstruction(
-                    step=step,
-                    params=params,
+                    step=load_step,
+                    replay_data=replay_data,
                     world_model=world_model,
-                    agent=agent,
-                    seed=123,
+                    export_path=eval_result_path,
                     sequence="clip" in args.mode
             )
+

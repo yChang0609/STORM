@@ -14,15 +14,8 @@ class STORM:
             super().__init__()
             self.num_repeat = num_repeat
             self.in_feature_width = int(in_feature_width)
-            self.act_fn = nn.ReLU(inplace=True) if act=='relu' else nn.SiLU() #nn.GELU('none')
-            self.norm_fn = (
-                lambda channel: 
-                    nn.Sequential(
-                        Rearrange('B C H W -> B H W C'),
-                        nn.RMSNorm(channel),
-                        Rearrange('B H W C -> B C H W')
-                    ) if norm == 'rms' else nn.BatchNorm2d(channel)
-            )
+            self.act_fn = nn.ReLU(inplace=True) if act=='relu' else nn.SiLU(inplace=True) #nn.GELU('none')
+            self.norm_fn = lambda shape:nn.RMSNorm(shape) if norm == 'rms' else nn.BatchNorm2d(shape[-3])
             # -- stem
             backbone = []
             ## -- repeat layer
@@ -50,7 +43,7 @@ class STORM:
             )
             feature_width = self.in_feature_width//2
             channels = stem_channels
-            backbone.append(self.norm_fn(channels))
+            backbone.append(self.norm_fn((channels, feature_width, feature_width)))
             backbone.append(self.act_fn)
 
             ## -- Deep layers
@@ -81,7 +74,7 @@ class STORM:
                 )
                 channels *= 2
                 feature_width //= 2
-                backbone.append(self.norm_fn(channels))
+                backbone.append(self.norm_fn((channels, feature_width, feature_width)))
                 backbone.append(self.act_fn)
 
             self.backbone = nn.Sequential(*backbone)
@@ -104,20 +97,13 @@ class STORM:
             backbone = []
             self.recover_channels = int(recover_channels)
             self.recover_width = int(recover_width)
-            self.act_fn = nn.ReLU(inplace=True) if act=='relu' else nn.SiLU() # nn.GELU('none')
-            self.norm_fn = (
-                lambda channel: 
-                    nn.Sequential(
-                        Rearrange('B C H W -> B H W C'),
-                        nn.RMSNorm(channel),
-                        Rearrange('B H W C -> B C H W')
-                    ) if norm == 'rms' else nn.BatchNorm2d(channel)
-            )
+            self.act_fn = nn.ReLU(inplace=True) if act=='relu' else nn.SiLU(inplace=True) # nn.GELU('none')
+            self.norm_fn = lambda shape:nn.RMSNorm(shape) if norm == 'rms' else nn.BatchNorm2d(shape[-3])
 
             # stem
             backbone.append(nn.Linear(in_dim, int(last_channels*encoder_feature_width*encoder_feature_width), bias=False))
             backbone.append(Rearrange('B (C H W) -> B C H W', C=last_channels, H=encoder_feature_width, W=encoder_feature_width))
-            backbone.append(self.norm_fn(last_channels))
+            backbone.append(self.norm_fn((last_channels, encoder_feature_width, encoder_feature_width)))
             backbone.append(self.act_fn)
 
             # residual_layer
@@ -153,7 +139,7 @@ class STORM:
                                 bias=False
                             )
                         )
-                backbone.append(self.norm_fn(channels))
+                backbone.append(self.norm_fn((channels, feat_width, feat_width)))
                 backbone.append(self.act_fn)
             # recover layer
             backbone.append(
@@ -178,7 +164,7 @@ class STORM:
                             bias=False
                         )
                     )
-            backbone.append(self.norm_fn(self.recover_channels))
+            backbone.append(self.norm_fn((self.recover_channels, feat_width, feat_width)))
             backbone.append(self.act_fn)
 
             self.backbone = nn.Sequential(*backbone)
@@ -217,15 +203,8 @@ class Dreamer:
             current_height = current_width = in_feature_width
             
             self.depths = [depth * mult for mult in mults]
-            self.act_fn = getattr(F, act) if hasattr(F, act) else F.gelu
-            self.norm_fn = (
-                lambda channel: 
-                    nn.Sequential(
-                        Rearrange('B C H W -> B H W C'),
-                        nn.RMSNorm(channel),
-                        Rearrange('B H W C -> B C H W')
-                    ) if norm == 'rms' else nn.BatchNorm2d(channel)
-            )
+            self.act_fn = nn.ReLU(inplace=True) if act=='relu' else nn.SiLU(inplace=True) #nn.GELU('none')
+            self.norm_fn = lambda shape:nn.RMSNorm(shape) if norm == 'rms' else nn.BatchNorm2d(shape[-3])
 
             self.kernel = kernel
             self.strided = strided
@@ -241,7 +220,7 @@ class Dreamer:
                 current_height = (current_height + 2 * 0 - (kernel - 1) - 1) // stride + 1
                 current_width = (current_width + 2 * 0 - (kernel - 1) - 1) // stride + 1
                 
-                self.conv_layers.append(self.norm_fn(depth))
+                self.conv_layers.append(self.norm_fn((depth, current_height, current_width)))
                 input_channels = depth
 
             self.last_channels = self.depths[-1]
@@ -270,15 +249,8 @@ class Dreamer:
             self.recover_channels = recover_channels
             self.recover_width = recover_width
 
-            self.act_fn = getattr(F, act) if hasattr(F, act) else F.silu
-            self.norm_fn = (
-                lambda channel: 
-                    nn.Sequential(
-                        Rearrange('B C H W -> B H W C'),
-                        nn.RMSNorm(channel),
-                        Rearrange('B H W C -> B C H W')
-                    ) if norm == 'rms' else nn.BatchNorm2d(channel)
-            )
+            self.act_fn = nn.ReLU(inplace=True) if act=='relu' else nn.SiLU(inplace=True) #nn.GELU('none')
+            self.norm_fn = lambda shape:nn.RMSNorm(shape) if norm == 'rms' else nn.BatchNorm2d(shape[-3])
             self.outscale = outscale
             self.kernel = kernel
             self.strided = strided
@@ -288,7 +260,7 @@ class Dreamer:
             reshape_layer = []
             reshape_layer.append(nn.Linear(in_dim, int(last_channels*encoder_feature_width*encoder_feature_width), bias=False))
             reshape_layer.append(Rearrange('B (C H W) -> B C H W', C=last_channels, H=encoder_feature_width, W=encoder_feature_width))
-            reshape_layer.append(self.norm_fn(last_channels))
+            reshape_layer.append(self.norm_fn((last_channels, encoder_feature_width, encoder_feature_width)))
             self.reshape_layer = nn.Sequential(*reshape_layer)
 
             # Define CNN layers for image outputs
@@ -304,9 +276,9 @@ class Dreamer:
                 )
                 current_height = (current_height - 1) * stride - 2 * padding + dilation * (kernel - 1) + output_padding + 1
                 current_width = (current_width - 1) * stride - 2 * padding + dilation * (kernel - 1) + output_padding + 1
-                self.deconv_layers.append(self.norm_fn(depth))
+                self.deconv_layers.append(self.norm_fn((depth, current_height, current_width)))
                 input_channels = depth
-
+                
             self.img_out = nn.Conv2d(input_channels, self.recover_channels, kernel_size=kernel)
             current_height = (current_height - 1) * stride - 2 * padding + dilation * (kernel - 1) + output_padding + 1
             current_width = (current_width - 1) * stride - 2 * padding + dilation * (kernel - 1) + output_padding + 1
