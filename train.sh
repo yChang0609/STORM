@@ -30,4 +30,6 @@ env_name=HuntCow #CombatSpider HuntCow
 # MINEDOJO_HEADLESS=1 python -u train.py -log "Tuning/${env_name}-100k-seed1-STORM-tranLayer" -seed 1 -config "Experiments/HuntCow/100K_HuntCow_STORM-tranLayer.yaml"
 # MINEDOJO_HEADLESS=1 python -u train.py -log "Tuning/${env_name}-100k-seed1-STORM-dreamer" -seed 1 -config "Experiments/HuntCow/100K_HuntCow_STORM-dreamer.yaml"
 # MINEDOJO_HEADLESS=1 python -u train.py -log "Tuning/${env_name}-100k-seed1-STORM-imagine" -seed 1 -config "Experiments/HuntCow/100K_HuntCow_STORM-imagine.yaml"
-MINEDOJO_HEADLESS=1 python -u train.py -log "HuntCow-100k-seed1-STORM-Test" -seed 1 -config "config_files/100K_HuntCow_STORM.yaml"
+# MINEDOJO_HEADLESS=1 python -u train.py -log "HuntCow-100k-seed1-STORM-Test" -seed 1 -config "config_files/100K_HuntCow_STORM.yaml"
+
+MINEDOJO_HEADLESS=1 python -u train.py -log "100K_HuntCows_STORM" -seed 1 -config "Experiments/HuntCows/100K_HuntCows_STORM.yaml"

@@ -32,9 +32,8 @@ parser.add_argument(
     help="Log file names",
     required=True
 )
-# parser.add_argument("-seed", type=int, required=True)
-# parser.add_argument("-config", type=str, required=True)
 parser.add_argument("-mode", type=str, required=False,default="agent")
+parser.add_argument("-reply_data", type=str, required=False)
 
 args = parser.parse_args()
 
@@ -42,6 +41,32 @@ print(str(args))
 
 mount_path_env = os.getenv('MOUNT_PATH', "")
 ckpt_path = os.path.join(mount_path_env,"ckpt/")
+
+def load_images(folder_path, start=0, end=-1):
+    files = sorted(os.listdir(folder_path))
+    image_files = [f for f in files if f.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tiff'))]
+    
+    if end == -1:
+        end = len(image_files)
+    
+    selected_files = image_files[start:end]
+    
+    images = []
+    for file_name in selected_files:
+        file_path = os.path.join(folder_path, file_name)
+        try:
+            with Image.open(file_path) as img:
+                image = cv2.resize(np.array(img), (224, 224), interpolation=cv2.INTER_LINEAR)
+                image_tensor = torch.Tensor(image).permute(2, 0, 1).cuda()  # (H, W, C) -> (C, H, W)
+                image_tensor = rearrange(image_tensor, "C H W -> 1 1 C H W") / 255.0
+                images.append(image_tensor)
+        except Exception as e:
+            print(f"failed load {file_name}: {e}")
+    
+    return images
+
+
+
 
 def save_tensor_with_channels(tensor, output_dir, base_file_name="original"):
     """
@@ -101,6 +126,7 @@ def eval_episodes(step, num_episode, params, num_envs, world_model: WorldModelBa
     vec_env = build_single_env(params, seed=seed)
     current_obs, current_info = vec_env.reset()
     
+    episode_step = np.zeros(num_envs)
     sum_reward = np.zeros(num_envs)
     context_obs = deque(maxlen=16)
     context_action = deque(maxlen=16)
@@ -138,6 +164,7 @@ def eval_episodes(step, num_episode, params, num_envs, world_model: WorldModelBa
         # cv2.waitKey(10)
 
         # update current_obs, current_info and sum_reward
+        episode_step += 1
         sum_reward += reward
         current_obs = obs
         current_info = info
@@ -147,8 +174,9 @@ def eval_episodes(step, num_episode, params, num_envs, world_model: WorldModelBa
         done_flag = np.logical_or(done, truncated)
         if done_flag.any():
             for i in range(num_envs):
-                if done_flag:
+                if done_flag[i]:
                     final_rewards.append(sum_reward[i])
+                    print(f"Episode-{len(final_rewards)} / step: {episode_step[i]} & reward: {sum_reward[i]}")
                     
                     # insert done_frame
                     done_frame = np.ones((frame_size[0], frame_size[1], 3), dtype=np.uint8) * 255
@@ -170,10 +198,13 @@ def eval_episodes(step, num_episode, params, num_envs, world_model: WorldModelBa
 
                     # print(f"save_frames len - {len(final_rewards)}:{len(save_frames)} / {sum_reward[i]}")
 
-                    if sum_reward[i] > 10:
+                    if episode_step[i] < params["Environment"]["task_parameter"]["max_episode_len"]: #sum_reward[i] > 10:
                         success_count += 1
+                    episode_step[i] = 0
                     sum_reward[i] = 0
                     current_obs, current_info = vec_env.reset()
+                    
+                    
                     if len(final_rewards) == num_episode:
                         # save video
                         # save_frames += [cv2.cvtColor(current_obs.transpose(1, 2, 0), cv2.COLOR_RGB2BGR)]*4
@@ -199,6 +230,7 @@ def collect_data(params, world_model: WorldModelBase, agent: agents.ActorCriticA
     current_obs, current_info = vec_env.reset()
     
     living = True
+    replay_data = []
     context_obs = deque(maxlen=16)
     context_action = deque(maxlen=16)
     # sample
@@ -218,13 +250,14 @@ def collect_data(params, world_model: WorldModelBase, agent: agents.ActorCriticA
                 )
                 action = np.squeeze(action)
         context_obs.append(rearrange(torch.Tensor(current_obs.copy()).cuda(), "C H W -> 1 1 C H W")/255)
+        replay_data.append(rearrange(torch.Tensor(current_obs.copy()).cuda(), "C H W -> 1 1 C H W")/255)
         context_action.append(action)
         obs, reward, done, truncated, info = vec_env.step(action)
         current_obs = obs
         current_info = info
         living = (not done) or (current_info['elapsed_steps'] > 125)
     vec_env.close()
-    return list(context_obs)
+    return replay_data
     
 
 def eval_reconstruction(step, replay_data, world_model: WorldModelBase, export_path, sequence=False):
@@ -253,8 +286,10 @@ def load_model(log_file):
     steps = [int(path.split("_")[-1].split(".")[0]) for path in pathes]
     steps.sort()
     load_step = steps[-1]
+    
     world_model.load_state_dict(torch.load(f"{root_path}/world_model_{load_step}.pth"))
     agent.load_state_dict(torch.load(f"{root_path}/agent_{load_step}.pth"))
+
     return world_model, agent, params , load_step
 
 if __name__ == "__main__":
@@ -265,17 +300,19 @@ if __name__ == "__main__":
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
 
-    assert len(args.logs) > 1
-    if "reconstruction" in args.mode:
-        dummy_world_model, dummy_agent, dummy_params, _ = load_model(args.logs[0])
-        replay_data = collect_data(
-            params=dummy_params,
-            world_model=dummy_world_model,
-            agent=dummy_agent,
-            seed=123
-        )
-        del dummy_world_model, dummy_agent, dummy_params
-
+    assert len(args.logs) > 0
+    if "reconstruction" in args.mode :
+        if args.reply_data == None:
+            dummy_world_model, dummy_agent, dummy_params, _ = load_model(args.logs[0])
+            replay_data = collect_data(
+                params=dummy_params,
+                world_model=dummy_world_model,
+                agent=dummy_agent,
+                seed=123
+            )
+            del dummy_world_model, dummy_agent, dummy_params
+        else:
+            replay_data = load_images(args.reply_data, 1258, 1274)
 
     for log in args.logs:
         eval_result_path = os.path.join(mount_path_env,f"eval_result/{log}")

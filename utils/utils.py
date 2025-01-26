@@ -15,6 +15,7 @@ def load_config(config_path):
     params = None
     with open(config_path, 'r') as y_file:
         params = yaml.load(y_file, Loader=yaml.FullLoader)
+        print(f"Sysytem config version : {CONFIG_VERSION}")
         print('loaded params...')
         assert "config_version" in params, "config missing config_version"
         assert params["config_version"] == CONFIG_VERSION, "config_version not match"

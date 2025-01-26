@@ -42,18 +42,29 @@
 # MINEDOJO_HEADLESS=1 python -u eval.py -log "Tuning/${env_name}-100k-seed1-STORM-default" -seed 1 -config "Experiments/HuntCow/100K_HuntCow_STORM-default.yaml" -mode agent
 # MINEDOJO_HEADLESS=1 python -u eval.py -log "Tuning/${env_name}-100k-seed1-STORM-symlog" -seed 1 -config "Experiments/HuntCow/100K_HuntCow_STORM-symlog.yaml" -mode agent
 env_name=HuntCowEasy 
-MINEDOJO_HEADLESS=1 python -u eval.py -logs \
-    "${env_name}/100K_EasyHuntCow_STORM-continuous2048" \
-    "${env_name}/100K_EasyHuntCow_STORM-continuous1024" \
-    "${env_name}/100K_EasyHuntCow_STORM-transDim1024" \
-    "${env_name}/100K_EasyHuntCow_STORM-transLayer4" \
-    "${env_name}/100K_HuntCow_STORM-rms&silu_16" \
-    -mode reconstruction_clip
+# MINEDOJO_HEADLESS=1 python -u eval.py -logs \
+#     "${env_name}/100K_EasyHuntCow_STORM-continuous2048" \
+#     "${env_name}/100K_EasyHuntCow_STORM-continuous1024" \
+#     "${env_name}/100K_EasyHuntCow_STORM" \
+#     "${env_name}/100K_HuntCow_STORM-rms&silu_16" \
+#     -mode reconstruction_clip \
+
 
 # MINEDOJO_HEADLESS=1 python -u eval.py -logs \
+#     "${env_name}/100K_EasyHuntCow_STORM" \
 #     "${env_name}/100K_EasyHuntCow_STORM-continuous1024" \
 #     "${env_name}/100K_EasyHuntCow_STORM-continuous2048" \
 #     "${env_name}/100K_EasyHuntCow_STORM-sliu" \
+#     "${env_name}/100K_EasyHuntCow_STORM-sliu_continuous1024" \
+#     "${env_name}/100K_EasyHuntCow_STORM-sliu_continuous2048" \
 #     "${env_name}/100K_EasyHuntCow_STORM-transDim1024" \
 #     "${env_name}/100K_EasyHuntCow_STORM-transLayer4" \
+#     "${env_name}/100K_EasyHuntCow_STORM-transLayer4" \
+#     "100K_HuntCow_STORM-rms&silu_16" \
 #     -mode agent
+
+# MINEDOJO_HEADLESS=1 python -u eval.py -logs \
+#  "100K_HuntCows_STORM" -mode reconstruction_clip
+
+MINEDOJO_HEADLESS=1 python -u eval.py -logs \
+ "100K_HuntCows_STORM" -mode agent

@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
 from einops.layers.torch import Rearrange
+# import torch.utils.checkpoint as checkpoint
 
 class STORM:
     class Encoder(nn.Module):
@@ -309,3 +310,99 @@ class Dreamer:
                 x = self.act_fn(layer(x))
             x = torch.sigmoid(self.padding_layer(self.img_out(x)) * self.outscale)
             return x
+
+
+if __name__ == '__main__':
+    in_channels = 3
+    in_feature_width = 224
+    device = torch.device('cuda:0')
+
+    from torch.utils.data import DataLoader, TensorDataset
+    import torch.optim as optim
+    import time
+    # Mock dataset creation (e.g., random image-like data)
+    def generate_mock_data(num_samples, in_channels, in_feature_width):
+        data = torch.rand(num_samples, in_channels, in_feature_width, in_feature_width)
+        return data
+
+    # Hyperparameters
+    num_samples = 1000
+    batch_size = 16 * 16
+    epochs = 10
+    learning_rate = 1e-3
+
+    # Generate mock dataset
+    data = generate_mock_data(num_samples, in_channels, in_feature_width)
+    dataset = TensorDataset(data)
+    data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+    # Create model
+    encoder = Dreamer.Encoder(
+        in_channels, in_feature_width ,
+        depth=64, mults=(2, 3, 4, 4),
+        act='silu', norm='rms', 
+        kernel=5, strided=True
+    ).to(device)
+
+    head = nn.Linear(
+        encoder.last_channels*encoder.final_feature_width*encoder.final_feature_width, 
+        32*32
+    ).to(device)
+
+    decoder = Dreamer.Decoder(
+        32*32, 
+        encoder.last_channels, encoder.final_feature_width,
+        in_channels, in_feature_width, 
+        depth=8, mults=(2, 3, 4, 4),
+        act='silu', norm='rms', 
+        outscale=1.0, kernel=5, strided=True
+    ).to(device)
+
+    # Generate mock dataset
+    data = generate_mock_data(num_samples, in_channels, in_feature_width)
+    dataset = TensorDataset(data)
+    data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+    # Define optimizer and loss function
+    criterion = nn.MSELoss()
+    optimizer = optim.Adam(list(encoder.parameters()) + list(head.parameters()))
+
+    print(encoder)
+    print(head)
+    print(decoder)
+
+    # Training loop
+    for epoch in range(epochs):
+        epoch_loss = 0.0
+        start_time = time.time()
+        
+        for batch_idx, (inputs,) in enumerate(data_loader):
+            # Move data to device
+            inputs = inputs.to(device)
+
+            # Forward pass
+            encoded = encoder(inputs)
+            latent = head(encoded.view(encoded.size(0), -1))
+            # latent = latent.view(latent.size(0), 32, 32)
+            reconstructed = decoder(latent)
+
+            # Compute loss
+            loss = criterion(reconstructed, inputs)
+
+            # Backward pass
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            epoch_loss += loss.item()
+
+            # Monitor GPU usage
+            if batch_idx % 10 == 0:
+                free, total = torch.cuda.mem_get_info(device)
+                mem_used_MB = (total - free) / 1024 ** 2
+                print(f"Epoch [{epoch+1}/{epochs}], Batch [{batch_idx+1}/{len(data_loader)}], GPU Memory Used: {mem_used_MB:.2f} MB")
+
+        epoch_time = time.time() - start_time
+        print(f"Epoch [{epoch+1}/{epochs}], Loss: {epoch_loss/len(data_loader):.4f}, Time: {epoch_time:.2f}s")
+
+    print("Training complete.")
