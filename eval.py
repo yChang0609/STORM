@@ -137,6 +137,7 @@ def eval_episodes(step, num_episode, params, num_envs, world_model: WorldModelBa
     frame_size = tuple(reversed(params["Environment"]["task_parameter"]["image_size"]))
 
     success_count = 0
+    final_ep_steps = []
     final_rewards = []
     # for total_steps in tqdm(range(max_steps//num_envs)):
     while True:
@@ -175,6 +176,7 @@ def eval_episodes(step, num_episode, params, num_envs, world_model: WorldModelBa
         if done_flag.any():
             for i in range(num_envs):
                 if done_flag[i]:
+                    final_ep_steps.append(episode_step[i])
                     final_rewards.append(sum_reward[i])
                     print(f"Episode-{len(final_rewards)} / step: {episode_step[i]} & reward: {sum_reward[i]}")
                     
@@ -216,7 +218,7 @@ def eval_episodes(step, num_episode, params, num_envs, world_model: WorldModelBa
                             out.write(frame)
                         out.release()
                         vec_env.close()
-                        return final_rewards, np.mean(final_rewards)
+                        return final_ep_steps, final_rewards, np.mean(final_rewards), (success_count / num_episode * 100)
         # <<< sample part
         
 def collect_data(params, world_model: WorldModelBase, agent: agents.ActorCriticAgent,  seed=456):
@@ -262,14 +264,14 @@ def collect_data(params, world_model: WorldModelBase, agent: agents.ActorCriticA
 
 def eval_reconstruction(step, replay_data, world_model: WorldModelBase, export_path, sequence=False):
     world_model.eval()
-    agent.eval()
+    # agent.eval()
     recon_list = replay_data if sequence else replay_data[-1]
     obs, obs_hat = world_model.reconstruction(torch.cat(recon_list, dim=1))
-    save_tensor_with_channels(obs, f"{export_path}/{step}_reconstruction/", f"original")
+    # save_tensor_with_channels(obs, f"{export_path}/{step}_reconstruction/", f"original")
     save_tensor_with_channels(obs_hat, f"{export_path}/{step}_reconstruction/", f"vae-recon")
 
 
-def load_model(log_file):
+def load_model(log_file, only_wm=False):
     config = os.path.join("runs", log_file, "config.yaml")
     params = load_config(config)
     # build and load model/agent
@@ -279,7 +281,7 @@ def load_model(log_file):
     dummy_env.close()
     # build world model and agent
     world_model = build_world_model(params, action_dims)
-    agent = build_agent(params, action_dims)
+    agent = None if only_wm else build_agent(params, action_dims) 
 
     root_path = os.path.join(ckpt_path,log_file)
     pathes = glob.glob(f"{root_path}/world_model_*.pth")
@@ -288,7 +290,7 @@ def load_model(log_file):
     load_step = steps[-1]
     
     world_model.load_state_dict(torch.load(f"{root_path}/world_model_{load_step}.pth"))
-    agent.load_state_dict(torch.load(f"{root_path}/agent_{load_step}.pth"))
+    if not only_wm: agent.load_state_dict(torch.load(f"{root_path}/agent_{load_step}.pth"))
 
     return world_model, agent, params , load_step
 
@@ -299,7 +301,7 @@ if __name__ == "__main__":
 
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
-
+    num_episode = 20
     assert len(args.logs) > 0
     if "reconstruction" in args.mode :
         if args.reply_data == None:
@@ -312,40 +314,47 @@ if __name__ == "__main__":
             )
             del dummy_world_model, dummy_agent, dummy_params
         else:
-            replay_data = load_images(args.reply_data, 1258, 1274)
+            replay_data = load_images(args.reply_data)
 
     for log in args.logs:
         eval_result_path = os.path.join(mount_path_env,f"eval_result/{log}")
         os.makedirs(eval_result_path, exist_ok=True)
-        world_model, agent, params, load_step = load_model(log)
+        
         if args.mode == "agent":
+            world_model, agent, params, load_step = load_model(log)
             episode_returns = []
             results = []
+            success_rate_list = []
             seed_np_torch(seed=params["BasicSettings"]["Seed"])
             eval_seed_list = [456, 789, 357, 468, 790]
             for seed in eval_seed_list:
-                episode_rewards, episode_avg_return = eval_episodes(
+                episode_steps, episode_rewards, episode_avg_return, success_rate = eval_episodes(
                     step=load_step,
-                    num_episode=20,
+                    num_episode=num_episode,
                     params=params,
                     num_envs=1,
                     world_model=world_model,
                     agent=agent,
                     seed=seed
                 )
-                episode_returns.append([[i, episode_rewards[i]] for i in range(len(episode_rewards))])
-                results.append([load_step, episode_avg_return])
+                episode_returns.append([[i, episode_rewards[i], episode_steps[i]] for i in range(len(episode_rewards))])
+                results.append([load_step, episode_avg_return, success_rate])
             write_file = os.path.join(eval_result_path, "return.csv")
+            success_rate_temp = 0
             with open(write_file, "w+") as fout:
                 for i in range(len(results)):
-                    fout.write("episode, episode_return\n")
-                    for ep, reward in episode_returns[i]:
-                        fout.write(f"{ep},{reward}\n")
-                    fout.write("step, episode_avg_return\n")
-                    load_step, episode_avg_return = results[i]
-                    fout.write(f"{load_step},{episode_avg_return}\n")
+                    fout.write("episode, episode_return, episode_steps\n")
+                    for ep, reward, ep_step in episode_returns[i]:
+                        fout.write(f"{ep},{reward},{ep_step}\n")
+                    fout.write("step, episode_avg_return, success_rate\n")
+                    load_step, episode_avg_return, success_rate = results[i]
+                    fout.write(f"{load_step},{episode_avg_return}, {success_rate}\n")
+                    success_rate_temp += success_rate 
                     fout.write("-----------------------------------\n")
+                fout.write(f"Eval success rate:{success_rate_temp/len(eval_seed_list)}\n")
+            print(f"Eval avg success rate: {success_rate_temp/len(eval_seed_list)}")
         elif "reconstruction" in args.mode:
+            world_model, _, params, load_step = load_model(log,only_wm=True)
             eval_reconstruction(
                     step=load_step,
                     replay_data=replay_data,
@@ -353,4 +362,3 @@ if __name__ == "__main__":
                     export_path=eval_result_path,
                     sequence="clip" in args.mode
             )
-

@@ -23,7 +23,7 @@ class SymLogLoss(nn.Module):
         self.mse_loss = MSELoss()
 
     def forward(self, output, target):
-        target = symlog(target)
+        # target = symlog(target)
         return 0.5 * self.mse_loss(output, target) # 0.5*F.mse_loss(output, target)
 
 

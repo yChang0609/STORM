@@ -143,7 +143,7 @@ def joint_train_world_model_agent(params,
         # <<< sample part
         
         # train world model part >>>
-        if replay_buffer.ready() and total_steps % (train_dynamics_every_steps//num_envs) == 0:
+        if replay_buffer.ready() and (total_steps < 2500 or total_steps % (train_dynamics_every_steps//num_envs) == 0):
             if total_steps % (save_every_steps//num_envs) == 0:
                 log_video = True
             else:
