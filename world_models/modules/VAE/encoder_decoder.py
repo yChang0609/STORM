@@ -11,7 +11,7 @@ class STORM:
                      in_channels, in_feature_width ,
                      final_feature_width, 
                      stem_channels=256, num_repeat=2,
-                     act='relu', norm='batch'):
+                     act='relu', norm='batch', **kwargs):
             super().__init__()
             self.num_repeat = num_repeat
             self.in_feature_width = int(in_feature_width)
@@ -93,7 +93,7 @@ class STORM:
                      last_channels, final_feature_width, encoder_feature_width, 
                      recover_channels, recover_width, 
                      stem_channels=256, num_repeat=2,
-                     act='relu', norm='batch'):
+                     act='relu', norm='batch', **kwargs):
             super().__init__()
             backbone = []
             self.recover_channels = int(recover_channels)
@@ -198,7 +198,7 @@ class Dreamer:
                      in_channels, in_feature_width ,
                      depth=64, mults=(2, 3, 4, 4),
                     act='gelu', norm='rms', 
-                    kernel=5, strided=False):
+                    kernel=5, strided=False, **kwargs):
             super().__init__()
             self.in_channels = in_channels
             current_height = current_width = in_feature_width
@@ -215,12 +215,13 @@ class Dreamer:
             self.conv_layers = nn.ModuleList()
             for depth in self.depths:
                 stride = (2 if strided else 1)
+                padding = (0 if strided else 1)
                 self.conv_layers.append(
-                    nn.Conv2d(input_channels, depth, kernel_size=kernel, stride=stride)
+                    nn.Conv2d(input_channels, depth, kernel_size=kernel, stride=stride,padding=padding)
                 )
-                current_height = (current_height + 2 * 0 - (kernel - 1) - 1) // stride + 1
-                current_width = (current_width + 2 * 0 - (kernel - 1) - 1) // stride + 1
-                
+                current_height = (current_height + 2 * padding - (kernel - 1) - 1) // stride + 1
+                current_width = (current_width + 2 * padding - (kernel - 1) - 1) // stride + 1
+
                 self.conv_layers.append(self.norm_fn((depth, current_height, current_width)))
                 input_channels = depth
 
@@ -231,8 +232,8 @@ class Dreamer:
             for i, layer in enumerate(self.conv_layers):
                 x = layer(x)
                 x = self.act_fn(x)
-                if i % 2 == 1 and not self.strided:
-                    x = F.max_pool2d(x, kernel_size=2)
+                # if i % 2 == 1 and not self.strided:
+                #     x = F.max_pool2d(x, kernel_size=2)
             return x
         
     class Decoder(nn.Module):
@@ -242,10 +243,10 @@ class Dreamer:
                     recover_channels, recover_width, 
                     depth=64, mults=(2, 3, 4, 4),
                     act='silu', norm='rms', 
-                    outscale=1.0, kernel=5, strided=False):
+                    outscale=1.0, kernel=5, strided=False, image_out = True, **kwargs):
             super().__init__()
             self.in_dim = in_dim
-
+            self.image_out = image_out
             self.depths = [depth * mult for mult in mults]
             self.recover_channels = recover_channels
             self.recover_width = recover_width
@@ -273,7 +274,7 @@ class Dreamer:
             for depth in reversed(self.depths[:-1]):
                 stride = (2 if strided else 1)
                 self.deconv_layers.append(
-                    nn.ConvTranspose2d(input_channels, depth, kernel_size=kernel, stride=stride)
+                    nn.ConvTranspose2d(input_channels, depth, kernel_size=kernel, stride=stride,padding=padding,output_padding=output_padding)
                 )
                 current_height = (current_height - 1) * stride - 2 * padding + dilation * (kernel - 1) + output_padding + 1
                 current_width = (current_width - 1) * stride - 2 * padding + dilation * (kernel - 1) + output_padding + 1
@@ -308,8 +309,8 @@ class Dreamer:
             x = self.act_fn(self.reshape_layer(x))
             for layer in self.deconv_layers:
                 x = self.act_fn(layer(x))
-            x = torch.sigmoid(self.padding_layer(self.img_out(x)) * self.outscale)
-            return x
+            x = self.padding_layer(self.img_out(x)) * self.outscale
+            return torch.sigmoid(x) if self.image_out else x
 
 
 if __name__ == '__main__':
