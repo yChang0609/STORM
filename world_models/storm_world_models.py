@@ -113,7 +113,7 @@ class STORMWorldModel(WorldModelBase):
             prior_flattened_sample = self._vae.flatten_sample(prior_sample)
             prior_flattened_sample = rearrange(prior_flattened_sample, "(B L) C -> B L C",B=batch_size) 
 
-        return prior_flattened_sample, last_dist_feat
+        return prior_flattened_sample, last_dist_feat, None
     
     def predict_next(self, last_flattened_sample, actions, log_video=True):
         batch_size, batch_length = last_flattened_sample.shape[:2]

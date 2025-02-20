@@ -16,8 +16,8 @@ RUN apt-get update && apt-get install -y \
 RUN sudo apt-get update
 
 COPY --chown=user:user \
-    requirements.txt /home/user/requirements.txt
-RUN pip install --no-cache-dir --exists-action=i -r requirements.txt
+requirements.txt /home/user/requirements.txt
+RUN pip install --exists-action=i -r requirements.txt
 
 WORKDIR /workspace
 COPY --chown=user:user . /workspace

@@ -25,7 +25,7 @@ from world_models.modules.Predictior.prediction_decoders import RewardDecoder, T
 
 # Funciton
 from world_models.utils.action2onehot import actions2onehot
-from world_models.utils.functions_losses import SymLogTwoHotLoss, MSELoss, SymLogLoss, UniversalKLLoss, symexp,symlog
+from world_models.utils.functions_losses import SymLogTwoHotLoss, MSELoss, SymLogLoss,  UniversalKLLoss, symexp,symlog
 from world_models.utils.logging import error_msg
 from world_models.utils.utils import vae_configs, dynamic_import
 
@@ -148,7 +148,7 @@ class JEPAWorldModel(WorldModelBase):
             post_logits = self._vae.encode(emb)
             sample = self._vae.sample(post_logits, sample_mode="random_sample")
             flattened_sample = self._vae.flatten_sample(sample)
-        # emb = rearrange(emb, "(B L) C H W -> B L C H W",B=batch_size) # process output shape
+
         emb_raw = rearrange(emb_raw, "(B L) C H W -> B L C H W",B=batch_size) # process output shape
         flattened_sample = rearrange(flattened_sample, "(B L) C -> B L C",B=batch_size) # process output shape
         return flattened_sample, emb_raw
@@ -165,9 +165,12 @@ class JEPAWorldModel(WorldModelBase):
             prior_logits = self._prior_dist_head(_last_dist_feat)
             prior_sample = self._vae.sample(prior_logits, sample_mode="random_sample")
             prior_flattened_sample = self._vae.flatten_sample(prior_sample)
+            emb_hat = self._vae.decode(prior_sample)
+            emb_hat = symexp(emb_hat) if self.symlog else emb_hat
+            emb_hat = rearrange(emb_hat, "(B L) C H W -> B L C H W",B=batch_size)
             prior_flattened_sample = rearrange(prior_flattened_sample, "(B L) C -> B L C",B=batch_size) 
 
-        return prior_flattened_sample, last_dist_feat
+        return prior_flattened_sample, last_dist_feat, None #emb_hat
     
     def predict_next(self, last_flattened_sample, actions, log_video=True):
         batch_size, batch_length = last_flattened_sample.shape[:2]

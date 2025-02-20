@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.distributed as dist
 from torch.distributions import OneHotCategorical
 from einops import rearrange, reduce
 from torch.distributions import MultivariateNormal
@@ -20,13 +21,15 @@ def symexp(x):
 class SymLogLoss(nn.Module):
     def __init__(self):
         super().__init__()
-        self.mse_loss = MSELoss()
+        self._loss = MSELoss()
 
     def forward(self, output, target):
         # target = symlog(target)
-        return 0.5 * self.mse_loss(output, target) # 0.5*F.mse_loss(output, target)
+        # return 0.5 * self._loss(output, target) # 0.5*F.mse_loss(output, target, reduction="sum")
+        # return 0.5 * F.mse_loss(output, target, reduction="sum") * 0.00001
+        return 0.5 * self._loss(output, target)
 
-
+    
 class SymLogTwoHotLoss(nn.Module):
     def __init__(self, num_classes, lower_bound, upper_bound):
         super().__init__()
@@ -65,9 +68,10 @@ class MSELoss(nn.Module):
 
     def forward(self, obs_hat, obs):
         loss = (obs_hat - obs)**2
-        loss = reduce(loss, "B L C H W -> B L", "sum")
-        return loss.mean()
-
+        loss = reduce(loss, "B L C H W -> B L", "mean")
+        loss = reduce(loss, "B L -> B ", "sum")
+        return loss.mean() # want to ignore batch size effect loss scale
+        # return loss.sum()
 
 class CategoricalKLDivLossWithFreeBits(nn.Module):
     def __init__(self, free_bits) -> None:

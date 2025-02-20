@@ -117,7 +117,7 @@ def process_visualize(img):
     img = cv2.resize(img, (640, 640))
     return img
 
-def eval_episodes(step, num_episode, params, num_envs, world_model: WorldModelBase, agent: agents.ActorCriticAgent, seed=456):
+def eval_episodes(num_episode, params, num_envs, world_model: WorldModelBase, agent: agents.ActorCriticAgent, seed=456):
     name = params["Environment"]["task"]
     print("Current env: " + colorama.Fore.YELLOW + f"{name}" + colorama.Style.RESET_ALL)
     world_model.eval()
@@ -151,9 +151,9 @@ def eval_episodes(step, num_episode, params, num_envs, world_model: WorldModelBa
                 context_latent,_ = world_model.encode_obs(torch.cat(list(context_obs), dim=1))
                 model_context_action = np.stack(list(context_action), axis=0)
                 model_context_action = torch.Tensor(model_context_action.reshape(1, *model_context_action.shape)).cuda() #[np.newaxis, 0, 1]
-                prior_flattened_sample, last_dist_feat = world_model.calc_last_dist_feat(context_latent, model_context_action)
+                prior_flattened_sample, last_dist_feat, jepa_feat = world_model.calc_last_dist_feat(context_latent, model_context_action)
                 action = agent.sample_as_env_action(
-                    torch.cat([prior_flattened_sample, last_dist_feat], dim=-1),
+                    torch.cat([prior_flattened_sample, last_dist_feat] if jepa_feat==None else [prior_flattened_sample, last_dist_feat, jepa_feat], dim=-1),
                     greedy=False
                 )
                 action = np.squeeze(action)
@@ -211,9 +211,9 @@ def eval_episodes(step, num_episode, params, num_envs, world_model: WorldModelBa
                         # save video
                         # save_frames += [cv2.cvtColor(current_obs.transpose(1, 2, 0), cv2.COLOR_RGB2BGR)]*4
                         print(f"success_rate: {(success_count / num_episode * 100):.2f}%")
-                        print("Mean reward: " + colorama.Fore.YELLOW + f"{np.mean(final_rewards)}" + colorama.Style.RESET_ALL)
-                        os.makedirs(f"{eval_result_path}/{step}_videos", exist_ok=True)
-                        out = cv2.VideoWriter(f"{eval_result_path}/{step}_videos/{seed}-episodes{num_episode}_{np.mean(final_rewards):.2f}.mp4", fourcc, fps, frame_size)
+                        print("Mean reward: " + f"{np.mean(final_rewards):.4f}")
+                        os.makedirs(f"{eval_result_path}/videos", exist_ok=True)
+                        out = cv2.VideoWriter(f"{eval_result_path}/videos/{seed}-episodes{num_episode}_{np.mean(final_rewards):.2f}.mp4", fourcc, fps, frame_size)
                         for frame in save_frames:
                             out.write(frame)
                         out.release()
@@ -245,9 +245,9 @@ def collect_data(params, world_model: WorldModelBase, agent: agents.ActorCriticA
                 context_latent,_ = world_model.encode_obs(torch.cat(list(context_obs), dim=1))
                 model_context_action = np.stack(list(context_action), axis=0)
                 model_context_action = torch.Tensor(model_context_action.reshape(1, *model_context_action.shape)).cuda() #[np.newaxis, 0, 1]
-                prior_flattened_sample, last_dist_feat = world_model.calc_last_dist_feat(context_latent, model_context_action)
+                prior_flattened_sample, last_dist_feat, jepa_feat = world_model.calc_last_dist_feat(context_latent, model_context_action)
                 action = agent.sample_as_env_action(
-                    torch.cat([prior_flattened_sample, last_dist_feat], dim=-1),
+                    torch.cat([prior_flattened_sample, last_dist_feat] if jepa_feat==None else [prior_flattened_sample, last_dist_feat, jepa_feat], dim=-1),
                     greedy=False
                 )
                 action = np.squeeze(action)
@@ -292,7 +292,7 @@ def load_model(log_file, only_wm=False):
     world_model.load_state_dict(torch.load(f"{root_path}/world_model_{load_step}.pth"))
     if not only_wm: agent.load_state_dict(torch.load(f"{root_path}/agent_{load_step}.pth"))
 
-    return world_model, agent, params , load_step
+    return world_model, agent, params
 
 if __name__ == "__main__":
     # ignore warnings
@@ -305,7 +305,7 @@ if __name__ == "__main__":
     assert len(args.logs) > 0
     if "reconstruction" in args.mode :
         if args.reply_data == None:
-            dummy_world_model, dummy_agent, dummy_params, _ = load_model(args.logs[0])
+            dummy_world_model, dummy_agent, dummy_params = load_model(args.logs[0])
             replay_data = collect_data(
                 params=dummy_params,
                 world_model=dummy_world_model,
@@ -321,7 +321,7 @@ if __name__ == "__main__":
         os.makedirs(eval_result_path, exist_ok=True)
         
         if args.mode == "agent":
-            world_model, agent, params, load_step = load_model(log)
+            world_model, agent, params = load_model(log)
             episode_returns = []
             results = []
             success_rate_list = []
@@ -329,7 +329,6 @@ if __name__ == "__main__":
             eval_seed_list = [456, 789, 357, 468, 790]
             for seed in eval_seed_list:
                 episode_steps, episode_rewards, episode_avg_return, success_rate = eval_episodes(
-                    step=load_step,
                     num_episode=num_episode,
                     params=params,
                     num_envs=1,
@@ -338,7 +337,7 @@ if __name__ == "__main__":
                     seed=seed
                 )
                 episode_returns.append([[i, episode_rewards[i], episode_steps[i]] for i in range(len(episode_rewards))])
-                results.append([load_step, episode_avg_return, success_rate])
+                results.append([episode_avg_return, success_rate])
             write_file = os.path.join(eval_result_path, "return.csv")
             success_rate_temp = 0
             with open(write_file, "w+") as fout:
@@ -347,16 +346,15 @@ if __name__ == "__main__":
                     for ep, reward, ep_step in episode_returns[i]:
                         fout.write(f"{ep},{reward},{ep_step}\n")
                     fout.write("step, episode_avg_return, success_rate\n")
-                    load_step, episode_avg_return, success_rate = results[i]
-                    fout.write(f"{load_step},{episode_avg_return}, {success_rate}\n")
+                    episode_avg_return, success_rate = results[i]
+                    fout.write(f"{episode_avg_return}, {success_rate}\n")
                     success_rate_temp += success_rate 
                     fout.write("-----------------------------------\n")
                 fout.write(f"Eval success rate:{success_rate_temp/len(eval_seed_list)}\n")
-            print(f"Eval avg success rate: {success_rate_temp/len(eval_seed_list)}")
+            print(f"Eval avg success rate: {success_rate_temp/len(eval_seed_list):.2f}%")
         elif "reconstruction" in args.mode:
-            world_model, _, params, load_step = load_model(log,only_wm=True)
+            world_model, _, params = load_model(log,only_wm=True)
             eval_reconstruction(
-                    step=load_step,
                     replay_data=replay_data,
                     world_model=world_model,
                     export_path=eval_result_path,

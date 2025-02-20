@@ -102,9 +102,9 @@ def joint_train_world_model_agent(params,
                     context_latent, _ = world_model.encode_obs(torch.cat(list(context_obs), dim=1))
                     model_context_action = np.stack(list(context_action), axis=0)
                     model_context_action = torch.Tensor(model_context_action.reshape(1, *model_context_action.shape)).cuda() #[np.newaxis, 0, 1]
-                    prior_flattened_sample, last_dist_feat = world_model.calc_last_dist_feat(context_latent, model_context_action)
+                    prior_flattened_sample, last_dist_feat, jepa_feat = world_model.calc_last_dist_feat(context_latent, model_context_action)
                     action = agent.sample_as_env_action(
-                        torch.cat([prior_flattened_sample, last_dist_feat], dim=-1),
+                        torch.cat([prior_flattened_sample, last_dist_feat] if jepa_feat==None else [prior_flattened_sample, last_dist_feat, jepa_feat], dim=-1),
                         greedy=False
                     )
                     action = np.squeeze(action)
@@ -189,7 +189,7 @@ def joint_train_world_model_agent(params,
                 logger=logger
             )
         # <<< train agent part
-
+        
         # save model per episode
         if total_steps % (save_every_steps//num_envs) == 0:
             # print(colorama.Fore.GREEN + f"Saving model at total steps {total_steps}" + colorama.Style.RESET_ALL)
