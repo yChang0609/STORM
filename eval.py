@@ -24,23 +24,9 @@ from libs.env_wrapper import build_single_env
 
 from PIL import Image
 
-# parse arguments
-parser = argparse.ArgumentParser()
-parser.add_argument(
-    "-logs", 
-    nargs='+', 
-    help="Log file names",
-    required=True
-)
-parser.add_argument("-mode", type=str, required=False,default="agent")
-parser.add_argument("-reply_data", type=str, required=False)
 
-args = parser.parse_args()
-
-print(str(args))
 
 mount_path_env = os.getenv('MOUNT_PATH', "")
-ckpt_path = os.path.join(mount_path_env,"ckpt/")
 
 def load_images(folder_path, start=0, end=-1):
     files = sorted(os.listdir(folder_path))
@@ -64,8 +50,6 @@ def load_images(folder_path, start=0, end=-1):
             print(f"failed load {file_name}: {e}")
     
     return images
-
-
 
 
 def save_tensor_with_channels(tensor, output_dir, base_file_name="original"):
@@ -109,41 +93,41 @@ def save_tensor_with_channels(tensor, output_dir, base_file_name="original"):
             file_name = f"step{idx}_{base_file_name}.png"
             image.save(os.path.join(output_dir, file_name))
 
-
-
 def process_visualize(img):
     img = img.astype('uint8')
     img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
     img = cv2.resize(img, (640, 640))
     return img
 
-def eval_episodes(num_episode, params, num_envs, world_model: WorldModelBase, agent: agents.ActorCriticAgent, seed=456):
+def eval_agent(
+        num_episode, 
+        params, num_envs, 
+        world_model: WorldModelBase, agent: agents.ActorCriticAgent, 
+        seed=456, verbose=False):
     name = params["Environment"]["task"]
-    print("Current env: " + colorama.Fore.YELLOW + f"{name}" + colorama.Style.RESET_ALL)
+    if verbose: print("Current env: " + colorama.Fore.YELLOW + f"{name}" + colorama.Style.RESET_ALL)
     world_model.eval()
     agent.eval()
 
     vec_env = build_single_env(params, seed=seed)
     current_obs, current_info = vec_env.reset()
-    
-    episode_step = np.zeros(num_envs)
-    sum_reward = np.zeros(num_envs)
+
+    episode_step = 0
+    sum_reward = 0
     context_obs = deque(maxlen=16)
     context_action = deque(maxlen=16)
-
-    fps = 30
-    save_frames = []
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v') 
-    frame_size = tuple(reversed(params["Environment"]["task_parameter"]["image_size"]))
 
     success_count = 0
     final_ep_steps = []
     final_rewards = []
-    # for total_steps in tqdm(range(max_steps//num_envs)):
+    if verbose:
+        fps = 30
+        save_frames = []
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v') 
+        frame_size = tuple(reversed(params["Environment"]["task_parameter"]["image_size"]))
+
     while True:
-        # save_frames += [cv2.cvtColor(current_obs.transpose(1, 2, 0), cv2.COLOR_RGB2BGR)]*4
-        save_frames.extend([cv2.cvtColor(obs.transpose(1, 2, 0), cv2.COLOR_RGB2BGR) for obs in current_info['all_obs']])
-        # sample part >>>
+        if verbose: save_frames.extend([cv2.cvtColor(obs.transpose(1, 2, 0), cv2.COLOR_RGB2BGR) for obs in current_info['all_obs']])
         with torch.no_grad():
             if len(context_action) == 0:
                 action = vec_env.action_space.sample()
@@ -159,67 +143,56 @@ def eval_episodes(num_episode, params, num_envs, world_model: WorldModelBase, ag
                 action = np.squeeze(action)
         context_obs.append(rearrange(torch.Tensor(current_obs.copy()).cuda(), "C H W -> 1 1 C H W")/255)
         context_action.append(action)
-
         obs, reward, done, truncated, info = vec_env.step(action)
-        # cv2.imshow("current_obs", process_visualize(obs[0]))
-        # cv2.waitKey(10)
 
-        # update current_obs, current_info and sum_reward
         episode_step += 1
         sum_reward += reward
         current_obs = obs
         current_info = info
+        if done:    
+            final_ep_steps.append(episode_step)
+            final_rewards.append(sum_reward)
+            if verbose: 
+                print(f"Episode-{len(final_rewards)} / step: {episode_step} & reward: {sum_reward}")
+                # insert done_frame
+                done_frame = np.ones((frame_size[0], frame_size[1], 3), dtype=np.uint8) * 255
+                text = f"Ep{len(final_rewards)}:{sum_reward:.2f}"
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                font_scale = 1
+                thickness = 2
+                (text_width, text_height), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+                text_x = (done_frame.shape[1] - text_width) // 2  
+                text_y = (done_frame.shape[0] + text_height) // 2  
+                position = (text_x, text_y)  
+                cv2.putText(
+                    done_frame, 
+                    text, position, cv2.FONT_HERSHEY_SIMPLEX,
+                    1, (0, 0, 0), 2,
+                    cv2.LINE_AA      
+                )
+                save_frames += [done_frame]*16
 
-        truncated = np.array([truncated])
-        done = np.array([done])
-        done_flag = np.logical_or(done, truncated)
-        if done_flag.any():
-            for i in range(num_envs):
-                if done_flag[i]:
-                    final_ep_steps.append(episode_step[i])
-                    final_rewards.append(sum_reward[i])
-                    print(f"Episode-{len(final_rewards)} / step: {episode_step[i]} & reward: {sum_reward[i]}")
-                    
-                    # insert done_frame
-                    done_frame = np.ones((frame_size[0], frame_size[1], 3), dtype=np.uint8) * 255
-                    text = f"Ep{len(final_rewards)}:{sum_reward[i]:.2f}"
-                    font = cv2.FONT_HERSHEY_SIMPLEX
-                    font_scale = 1
-                    thickness = 2
-                    (text_width, text_height), baseline = cv2.getTextSize(text, font, font_scale, thickness)
-                    text_x = (done_frame.shape[1] - text_width) // 2  
-                    text_y = (done_frame.shape[0] + text_height) // 2  
-                    position = (text_x, text_y)  
-                    cv2.putText(
-                        done_frame, 
-                        text, position, cv2.FONT_HERSHEY_SIMPLEX,
-                        1, (0, 0, 0), 2,
-                        cv2.LINE_AA      
-                    )
-                    save_frames += [done_frame]*16
+            if episode_step < params["Environment"]["task_parameter"]["max_episode_len"]: #sum_reward > 10:
+                success_count += 1
+            episode_step = 0
+            sum_reward = 0
 
-                    # print(f"save_frames len - {len(final_rewards)}:{len(save_frames)} / {sum_reward[i]}")
+            if len(final_rewards) == num_episode:
+                if verbose: 
+                    # save video
+                    print(f"success_rate: {(success_count / num_episode * 100):.2f}%")
+                    print("Mean reward: " + f"{np.mean(final_rewards):.4f}")
+                    os.makedirs(f"{eval_result_path}/videos", exist_ok=True)
+                    out = cv2.VideoWriter(f"{eval_result_path}/videos/{seed}-episodes{num_episode}_{np.mean(final_rewards):.2f}.mp4", fourcc, fps, frame_size)
+                    for frame in save_frames:
+                        out.write(frame)
+                    out.release()
+                vec_env.close()
+                return final_ep_steps, final_rewards, (success_count / num_episode * 100)
+            
+            current_obs, current_info = vec_env.reset()
 
-                    if episode_step[i] < params["Environment"]["task_parameter"]["max_episode_len"]: #sum_reward[i] > 10:
-                        success_count += 1
-                    episode_step[i] = 0
-                    sum_reward[i] = 0
-                    current_obs, current_info = vec_env.reset()
-                    
-                    
-                    if len(final_rewards) == num_episode:
-                        # save video
-                        # save_frames += [cv2.cvtColor(current_obs.transpose(1, 2, 0), cv2.COLOR_RGB2BGR)]*4
-                        print(f"success_rate: {(success_count / num_episode * 100):.2f}%")
-                        print("Mean reward: " + f"{np.mean(final_rewards):.4f}")
-                        os.makedirs(f"{eval_result_path}/videos", exist_ok=True)
-                        out = cv2.VideoWriter(f"{eval_result_path}/videos/{seed}-episodes{num_episode}_{np.mean(final_rewards):.2f}.mp4", fourcc, fps, frame_size)
-                        for frame in save_frames:
-                            out.write(frame)
-                        out.release()
-                        vec_env.close()
-                        return final_ep_steps, final_rewards, np.mean(final_rewards), (success_count / num_episode * 100)
-        # <<< sample part
+
         
 def collect_data(params, world_model: WorldModelBase, agent: agents.ActorCriticAgent,  seed=456):
     name = params["Environment"]["task"]
@@ -272,6 +245,7 @@ def eval_reconstruction(step, replay_data, world_model: WorldModelBase, export_p
 
 
 def load_model(log_file, only_wm=False):
+    ckpt_path = os.path.join(mount_path_env,"ckpt/")
     config = os.path.join("runs", log_file, "config.yaml")
     params = load_config(config)
     # build and load model/agent
@@ -295,6 +269,21 @@ def load_model(log_file, only_wm=False):
     return world_model, agent, params
 
 if __name__ == "__main__":
+    # parse arguments
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "-logs", 
+        nargs='+', 
+        help="Log file names",
+        required=True
+    )
+    parser.add_argument("-mode", type=str, required=False,default="agent")
+    parser.add_argument("-reply_data", type=str, required=False)
+
+    args = parser.parse_args()
+
+    print(str(args))
+
     # ignore warnings
     import warnings
     warnings.filterwarnings('ignore')
@@ -328,7 +317,7 @@ if __name__ == "__main__":
             seed_np_torch(seed=params["BasicSettings"]["Seed"])
             eval_seed_list = [456, 789, 357, 468, 790]
             for seed in eval_seed_list:
-                episode_steps, episode_rewards, episode_avg_return, success_rate = eval_episodes(
+                episode_steps, episode_rewards, success_rate = eval_agent(
                     num_episode=num_episode,
                     params=params,
                     num_envs=1,
@@ -337,7 +326,7 @@ if __name__ == "__main__":
                     seed=seed
                 )
                 episode_returns.append([[i, episode_rewards[i], episode_steps[i]] for i in range(len(episode_rewards))])
-                results.append([episode_avg_return, success_rate])
+                results.append([np.mean(episode_rewards), success_rate])
             write_file = os.path.join(eval_result_path, "return.csv")
             success_rate_temp = 0
             with open(write_file, "w+") as fout:

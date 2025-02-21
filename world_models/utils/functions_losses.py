@@ -19,14 +19,11 @@ def symexp(x):
 
 
 class SymLogLoss(nn.Module):
-    def __init__(self):
+    def __init__(self,reduce="sum,mean"):
         super().__init__()
-        self._loss = MSELoss()
+        self._loss = MSELoss(reduce)
 
     def forward(self, output, target):
-        # target = symlog(target)
-        # return 0.5 * self._loss(output, target) # 0.5*F.mse_loss(output, target, reduction="sum")
-        # return 0.5 * F.mse_loss(output, target, reduction="sum") * 0.00001
         return 0.5 * self._loss(output, target)
 
     
@@ -63,16 +60,28 @@ class SymLogTwoHotLoss(nn.Module):
         return symexp(F.softmax(output, dim=-1) @ self.bins)
     
 class MSELoss(nn.Module):
-    def __init__(self) -> None:
+    def __init__(self, reduce="sum,mean") -> None:
         super().__init__()
+        reduce_func_list = reduce.split(",")
+        self.feat_reduce = reduce_func_list[0]
+        self.batch_reduce = reduce_func_list[1]
+
 
     def forward(self, obs_hat, obs):
         loss = (obs_hat - obs)**2
-        loss = reduce(loss, "B L C H W -> B L", "mean")
-        loss = reduce(loss, "B L -> B ", "sum")
-        return loss.mean() # want to ignore batch size effect loss scale
-        # return loss.sum()
+        loss = reduce(loss, "B L C H W -> B L", self.feat_reduce)
+        loss = reduce(loss, "B L -> ", self.batch_reduce)
+        return loss
+    
+# class MSELoss(nn.Module):
+#     def __init__(self) -> None:
+#         super().__init__()
 
+#     def forward(self, obs_hat, obs):
+#         loss = (obs_hat - obs)**2
+#         loss = reduce(loss, "B L C H W -> B L", "sum")
+#         return loss.mean()
+    
 class CategoricalKLDivLossWithFreeBits(nn.Module):
     def __init__(self, free_bits) -> None:
         super().__init__()

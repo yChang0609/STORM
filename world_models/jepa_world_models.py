@@ -50,6 +50,7 @@ class JEPAWorldModel(WorldModelBase):
                  vae_type, stoch_dim, coder_type, coder_params,
                  patch_size, jepa_size, jepa_load_path:tuple,
                  transformer_max_length, transformer_hidden_dim, transformer_num_layers, transformer_num_heads,
+                 loss_reduce,
                  symlog, use_amp):
 
         super().__init__()
@@ -130,7 +131,7 @@ class JEPAWorldModel(WorldModelBase):
             transformer_hidden_dim=transformer_hidden_dim
         )
         
-        self.mse_loss_func = SymLogLoss() if symlog else MSELoss()
+        self.mse_loss_func = SymLogLoss(loss_reduce) if symlog else MSELoss(loss_reduce)
         self.ce_loss = nn.CrossEntropyLoss()
         self.bce_with_logits_loss_func = nn.BCEWithLogitsLoss()
         self.symlog_twohot_loss_func = SymLogTwoHotLoss(num_classes=255, lower_bound=-20, upper_bound=20)

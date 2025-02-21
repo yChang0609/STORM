@@ -20,13 +20,15 @@ def build_world_model(params, action_dims):
             stoch_dim=params["Models"]["WorldModel"]["VAEParams"]["StochasticDim"], 
             coder_type=params["Models"]["WorldModel"]["VAEParams"]["CoderType"], 
             coder_params=params["Models"]["WorldModel"]["VAEParams"]["CoderParams"], 
+            loss_reduce=params["Models"]["WorldModel"]["VAEParams"]["LossReduce"],
             
             # Transformer
             transformer_max_length=params["Models"]["WorldModel"]["TransformerParams"]["MaxLength"],
             transformer_hidden_dim=params["Models"]["WorldModel"]["TransformerParams"]["HiddenDim"],
             transformer_num_layers=params["Models"]["WorldModel"]["TransformerParams"]["NumLayers"],
             transformer_num_heads=params["Models"]["WorldModel"]["TransformerParams"]["NumHeads"],
-
+            
+            
             symlog=params["Models"]["WorldModel"]["VAEParams"]["Symlog"],
             use_amp=params["Models"]["use_amp"]
         )
@@ -44,6 +46,8 @@ def build_world_model(params, action_dims):
             stoch_dim=params["Models"]["WorldModel"]["VAEParams"]["StochasticDim"], 
             coder_type=params["Models"]["WorldModel"]["VAEParams"]["CoderType"], 
             coder_params=params["Models"]["WorldModel"]["VAEParams"]["CoderParams"], 
+            loss_reduce=params["Models"]["WorldModel"]["VAEParams"]["LossReduce"],
+
             
             # Transformer
             transformer_max_length=params["Models"]["WorldModel"]["TransformerParams"]["MaxLength"],

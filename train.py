@@ -11,6 +11,7 @@ import os
 
 
 from utils.utils import seed_np_torch, Logger, load_config
+from eval import eval_agent
 
 from libs.env_wrapper import build_single_env
 
@@ -66,7 +67,8 @@ def joint_train_world_model_agent(params,
                                   batch_size,  batch_length,
                                   demonstration_batch_size, imagine_demonstration_batch_size,
                                   imagine_batch_size, imagine_context_length, imagine_batch_length,
-                                  save_every_steps, 
+                                  save_every_steps,
+                                  eval_every_steps,
                                   seed, logger
                                 ):
     # create ckpt dir
@@ -79,7 +81,7 @@ def joint_train_world_model_agent(params,
     print("Current env: " + colorama.Fore.YELLOW + f"{env_name}" + colorama.Style.RESET_ALL)
     vec_env = build_single_env(params)
 
-    
+
     # reset envs and variables
     sum_reward = np.zeros(num_envs)
     current_obs, current_info = vec_env.reset()
@@ -88,6 +90,9 @@ def joint_train_world_model_agent(params,
     # init context qeue
     context_obs = deque(maxlen=16)
     context_action = deque(maxlen=16)
+
+    max_rewards = -1 *params["Environment"]["task_parameter"]["step_penalty"] * params["Environment"]["task_parameter"]["max_episode_len"]
+    min_steps = params["Environment"]["task_parameter"]["max_episode_len"]
 
     # sample and train
     for total_steps in tqdm(range(max_steps//num_envs)):
@@ -190,6 +195,29 @@ def joint_train_world_model_agent(params,
             )
         # <<< train agent part
         
+        if total_steps % (eval_every_steps//num_envs) == 0 and total_steps > 0:
+            episode_avg_returns = 0
+            episode_avg_steps = 0
+            eval_seed_list = [456, 789, 357]
+            for seed in eval_seed_list:
+                episode_steps, episode_rewards, success_rate = eval_agent(
+                    num_episode=5,
+                    params=params,
+                    num_envs=1,
+                    world_model=world_model,
+                    agent=agent,
+                    seed=seed
+                )
+                episode_avg_returns += np.mean(episode_rewards)
+                episode_avg_steps += np.mean(episode_steps)
+            episode_avg_returns /= len(eval_seed_list)
+            episode_avg_steps /= len(eval_seed_list)
+            if(max_rewards < episode_avg_returns or min_steps > episode_avg_steps):
+                max_rewards = episode_avg_returns
+                min_steps = episode_avg_steps
+                print(f"Saving best model at total steps {total_steps}")
+                torch.save(world_model.state_dict(), f"{ckpt_path}/best_world_model.pth")
+                torch.save(agent.state_dict(), f"{ckpt_path}/best_agent.pth")
         # save model per episode
         if total_steps % (save_every_steps//num_envs) == 0:
             # print(colorama.Fore.GREEN + f"Saving model at total steps {total_steps}" + colorama.Style.RESET_ALL)
@@ -272,6 +300,7 @@ if __name__ == "__main__":
             imagine_context_length=params["JointTrainAgent"]["ImagineContextLength"],
             imagine_batch_length=params["JointTrainAgent"]["ImagineBatchLength"],
             save_every_steps=params["JointTrainAgent"]["SaveEverySteps"],
+            eval_every_steps=params["JointTrainAgent"]["EvalEverySteps"],
             seed=params["Environment"]["seed"],
             logger=logger
         )
